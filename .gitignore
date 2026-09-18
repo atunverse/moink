@@ -1,0 +1,36 @@
+# ---- PlatformIO / 构建产物 ----
+.pio/
+.pioenvs/
+.piolibdeps/
+sdkconfig.old
+
+# ---- 固件/页面产物（可由源码重新生成；发布件走 GitHub Releases）----
+*.bin
+*.elf
+*.map
+*.zip
+releases/
+# flash_kit 是一键刷机工具包，bin 是其内容，保留入库
+!flash_kit/*.bin
+
+# ---- 本地备份与历史版本（保留在磁盘，不入库）----
+backups/
+page/page-R1.0.*.html
+!page/page-R1.0.22.html
+
+# ---- 临时/调试产物 ----
+tools/_*
+!tools/_exif_test.jpg
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+
+# ---- 编辑器 ----
+.vscode/
+.idea/

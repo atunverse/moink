@@ -1,0 +1,49 @@
+Processing moink (platform: espressif32; framework: espidf; board: esp32-c3-devkitm-1)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32-c3-devkitm-1.html
+PLATFORM: Espressif 32 (7.1.3) > Espressif ESP32-C3-DevKitM-1
+HARDWARE: ESP32C3 160MHz, 320KB RAM, 4MB Flash
+DEBUG: Current (cmsis-dap) External (cmsis-dap, esp-bridge, esp-builtin, esp-prog, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
+PACKAGES: 
+ - framework-espidf @ 4.60100.0 (6.1.0) 
+ - tool-cmake @ 3.30.2 
+ - tool-esp-rom-elfs @ 0.0.1+20241011 
+ - tool-esptoolpy @ 2.41100.260830 (4.11.0) 
+ - tool-idf @ 1.0.1 
+ - tool-mconf @ 1.4060000.20190628 (406.0.0) 
+ - tool-ninja @ 1.9.0 
+ - tool-riscv32-esp-elf-gdb @ 11.2.0+20220823 
+ - tool-xtensa-esp-elf-gdb @ 11.2.0+20230208 
+ - toolchain-esp32ulp @ 1.23800.240113 (2.38.0) 
+ - toolchain-riscv32-esp @ 15.2.0+20251204
+Reading CMake configuration...
+Generating assembly for certificate bundle...
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 0 compatible libraries
+Scanning dependencies...
+No dependencies
+Building in release mode
+Compiling .pio\build\moink\src\main.c.o
+Compiling .pio\build\moink\src\epd_drv.c.o
+Compiling .pio\build\moink\src\settings.c.o
+Compiling .pio\build\moink\src\netif_ap.c.o
+Compiling .pio\build\moink\src\captive.c.o
+Compiling .pio\build\moink\src\ota_web.c.o
+Compiling .pio\build\moink\src\frame.c.o
+Compiling .pio\build\moink\src\power.c.o
+src/power.c: In function 'power_init':
+src/power.c:45:18: error: 'ADC_ATTEN_DB_11' undeclared (first use in this function); did you mean 'ADC_ATTEN_DB_12'?
+   45 |         .atten = ADC_ATTEN_DB_11,
+      |                  ^~~~~~~~~~~~~~~
+      |                  ADC_ATTEN_DB_12
+src/power.c:45:18: note: each undeclared identifier is reported only once for each function it appears in
+*** [.pio\build\moink\src\power.c.o] Error 1
+Preprocessing linker script .pio\build\moink\memory.ld
+src/main.c:62:19: error: 'FALLBACK_HTML' defined but not used [-Werror=unused-const-variable=]
+   62 | static const char FALLBACK_HTML[] =
+      |                   ^~~~~~~~~~~~~
+cc1.exe: all warnings being treated as errors
+*** [.pio\build\moink\src\main.c.o] Error 1
+========================= [FAILED] Took 82.91 seconds =========================

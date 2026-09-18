@@ -1,0 +1,1668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>四色墨水屏转换器</title>
+<style>
+  :root{
+    --bg:#f6f4f0; --card:#fff; --line:#e3ddd3; --line2:#efeae1;
+    --ink:#241f1a; --ink2:#6b6157; --ink3:#9a928a;
+    --warm:#d2551a; --red:#e3342b; --yellow:#f2b500; --black:#1a1a1a; --white:#fdfdfd;
+    --sh:0 1px 2px rgba(60,45,30,.06),0 6px 20px rgba(60,45,30,.06);
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  html,body{margin:0;padding:0}
+  body{
+    background:radial-gradient(1100px 460px at 10% -10%, #fdf3e3 0%, rgba(253,243,227,0) 60%),
+               radial-gradient(820px 400px at 100% 0%, #fbe9e2 0%, rgba(251,233,226,0) 56%), var(--bg);
+    color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-text-size-adjust:100%; padding-bottom:env(safe-area-inset-bottom);
+  }
+  .wrap{max-width:1280px;margin:0 auto;padding:14px 14px 56px}
+  header.top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:2px 0 12px}
+  h1{font-size:17px;margin:0;display:flex;align-items:center;gap:8px;font-weight:650;letter-spacing:.2px}
+  h1 .dot{width:10px;height:10px;border-radius:50%;
+    background:linear-gradient(135deg,var(--black) 0 25%,var(--white) 25% 50%,var(--red) 50% 75%,var(--yellow) 75% 100%);
+    box-shadow:0 0 0 1.5px #fff,0 0 0 2.5px var(--line)}
+  .hdr-r{margin-left:auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .chip{font-size:12px;color:var(--ink2);background:#fff;border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+  .auto{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink2);cursor:pointer;user-select:none}
+  .auto input{accent-color:var(--warm);margin:0}
+
+  .grid{display:grid;gap:12px;grid-template-columns:340px minmax(0,1fr)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);overflow:hidden}
+  .card>h2{margin:0;padding:11px 14px;border-bottom:1px solid var(--line2);font-size:13px;font-weight:600;
+    display:flex;align-items:center;gap:8px;color:var(--ink)}
+  .card>h2 .tag{margin-left:auto;font-weight:400;font-size:12px;color:var(--ink3)}
+  .card>.bd{padding:12px 14px}
+  .a-ctl{grid-row:span 3}
+  @media (max-width:900px){
+    .grid{grid-template-columns:1fr}
+    .a-ctl{grid-row:auto}
+    .a-imp{order:-2} .a-pv{order:-1}
+  }
+
+  button{font:inherit;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--ink);
+    padding:8px 12px;cursor:pointer;transition:.13s}
+  button:hover{border-color:#cdc3b5;background:#fffdfa}
+  button:active{transform:translateY(1px)}
+  button.primary{background:linear-gradient(180deg,#e06a26,#d2551a);border-color:#b8480f;color:#fff;font-weight:600}
+  button.primary:hover{background:linear-gradient(180deg,#e87531,#c94e15)}
+  button.ghost{background:transparent}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row.mt{margin-top:9px}
+  .row>button{flex:1;min-width:0}
+  .row>button.grow2{flex:2}
+
+  .ctl{margin-bottom:11px}
+  .ctl:last-child{margin-bottom:0}
+  .ctl>label{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2);margin-bottom:4px}
+  .ctl>label b{margin-left:auto;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;font-size:12.5px}
+  input[type=range]{width:100%;accent-color:var(--warm);height:20px;margin:0;display:block}
+  select{width:100%;font:inherit;padding:7px 8px;border-radius:9px;border:1px solid var(--line);
+    background:#fff;color:var(--ink);appearance:none;
+    background-image:linear-gradient(45deg,transparent 50%,var(--ink3) 50%),linear-gradient(135deg,var(--ink3) 50%,transparent 50%);
+    background-position:calc(100% - 15px) 50%,calc(100% - 10px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .hint{font-size:11.5px;color:var(--ink3);margin-top:3px;line-height:1.45}
+  details.adv{border-top:1px solid var(--line2);margin-top:12px;padding-top:10px}
+  details.adv>summary{cursor:pointer;font-size:12.5px;color:var(--ink2);list-style:none;display:flex;align-items:center;gap:6px}
+  details.adv>summary::-webkit-details-marker{display:none}
+  details.adv>summary::before{content:"\25B8";transition:.15s;color:var(--ink3)}
+  details.adv[open]>summary::before{transform:rotate(90deg)}
+  details.adv .in{padding-top:11px}
+
+  #drop{border:1.5px dashed #d9cfc0;border-radius:11px;padding:16px 12px;text-align:center;cursor:pointer;
+    background:#fffdfa;transition:.15s}
+  #drop:hover,#drop.over{border-color:var(--warm);background:#fff8f0}
+  #drop .big{font-size:13.5px;font-weight:600;margin-bottom:2px}
+  #drop .sm{font-size:11.5px;color:var(--ink3)}
+  .thumbbar{display:flex;gap:10px;align-items:flex-start;margin-top:10px}
+  .thumbbar canvas{width:54px;height:auto;border-radius:7px;border:1px solid var(--line);display:block;background:#fff}
+
+  .pv-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  @media (max-width:640px){ .pv-grid{grid-template-columns:1fr 1fr} }
+  .pv{display:flex;flex-direction:column;gap:5px;min-width:0}
+  .pv .cap{font-size:11.5px;color:var(--ink3);display:flex;align-items:center;gap:6px}
+  .pv .frame{position:relative;background:#faf8f5;border:1px solid var(--line2);border-radius:9px;padding:6px;
+    display:flex;align-items:center;justify-content:center;min-height:80px;overflow:hidden}
+  canvas.pvc{max-width:100%;display:block;border-radius:4px}
+  #cvShade{image-rendering:pixelated}
+
+  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-top:12px}
+  .st{background:#fbf9f6;border:1px solid var(--line2);border-radius:9px;padding:7px 8px}
+  .st .k{font-size:11px;color:var(--ink3);display:flex;align-items:center;gap:5px}
+  .st .v{font-size:14px;font-weight:650;font-variant-numeric:tabular-nums;margin-top:1px}
+  .sw{width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.22);flex:0 0 auto}
+  #verdict{margin-top:10px;font-size:12.5px;padding:8px 10px;border-radius:9px;border:1px solid var(--line2);background:#fbf9f6;color:var(--ink2)}
+  #verdict.ok{background:#f2f9f4;border-color:#cfe9d8;color:#256b3d}
+  #verdict.warn{background:#fdf6e6;border-color:#f0e0bb;color:#8a6410}
+
+  #outInfo{margin-top:9px;font-size:11.5px;color:var(--ink3);line-height:1.5;min-height:1px}
+
+  .ovl{position:fixed;inset:0;background:rgba(28,22,16,.62);display:none;z-index:60;
+    align-items:center;justify-content:center;padding:14px}
+  .ovl.on{display:flex}
+  .ovl-box{background:#fff;border-radius:14px;max-width:100%;max-height:100%;display:flex;flex-direction:column;
+    box-shadow:0 24px 70px rgba(30,20,10,.34);overflow:hidden}
+  .ovl-head{display:flex;align-items:center;gap:7px;padding:10px 12px;border-bottom:1px solid var(--line2);flex-wrap:wrap}
+  .ovl-head b{font-size:13.5px;margin-right:4px}
+  .ovl-head .sp{flex:1}
+  .ovl-head button,.ovl-head select{padding:6px 9px;font-size:12.5px;width:auto;border-radius:8px}
+  .ovl-head select{width:auto;min-width:112px}
+  .ovl-stage{padding:12px;display:flex;align-items:center;justify-content:center;background:#f7f5f2;min-height:180px;overflow:auto}
+  .ovl-stage canvas{touch-action:none;cursor:crosshair;display:block;box-shadow:0 2px 14px rgba(0,0,0,.18)}
+  .ovl-tip{padding:0 12px 10px;font-size:11.5px;color:var(--ink3);text-align:center}
+
+  .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);background:#2b241c;color:#fff;
+    padding:9px 15px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:.2s;z-index:90;max-width:88vw;text-align:center}
+  .toast.on{opacity:1;transform:translate(-50%,0)}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;
+    border-radius:50%;animation:sp .7s linear infinite;vertical-align:-1px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1><span class="dot"></span>四色墨水屏转换器</h1>
+    <div class="hdr-r">
+      <span class="chip" id="srcTag">未导入照片</span>
+      <label class="auto"><input type="checkbox" id="autoOnLoad" checked>导入后自动优化</label>
+    </div>
+  </header>
+
+  <div class="grid">
+
+    <!-- ========== 调整 ========== -->
+    <section class="card a-ctl">
+      <h2>调整</h2>
+      <div class="bd">
+        <div class="row">
+          <button id="btnAuto" class="primary">一键优化</button>
+          <button id="btnReset" class="ghost">恢复默认</button>
+        </div>
+
+        <div class="ctl" style="margin-top:12px">
+          <label>色彩风格</label>
+          <select id="mode">
+            <option value="natural">自然暖调（保留照片观感）</option>
+            <option value="adaptive">全面暖色映射（红黄主导）</option>
+            <option value="sunset">日落渐变</option>
+            <option value="ember">余烬渐变</option>
+            <option value="duotone">红黄双色</option>
+            <option value="sepia">棕褐老照片</option>
+            <option value="gray">纯黑白</option>
+            <option value="naive">原图直出（对照）</option>
+          </select>
+          <div class="hint" id="modeHint"></div>
+        </div>
+
+        <div class="ctl m-natural">
+          <label>暖色鲜艳度 <b id="vWarmBoost">0.60</b></label>
+          <input type="range" id="warmBoost" min="0" max="1" step="0.05" value="0.6">
+          <div class="hint">肤色、木质、夕阳这类暖色有多鲜艳。</div>
+        </div>
+
+        <div class="ctl m-natural">
+          <label>冷色偏移 <b id="vCoolPull">0.25</b></label>
+          <input type="range" id="coolPull" min="0" max="0.8" step="0.05" value="0.25">
+          <div class="hint">蓝天、水面的偏移幅度。0 = 保持中性。</div>
+        </div>
+
+        <div class="ctl">
+          <label><span id="lbSat">色彩强度</span> <b id="vSaturation">1.00</b></label>
+          <input type="range" id="saturation" min="0" max="2" step="0.05" value="1">
+        </div>
+
+        <div class="ctl m-adaptive" hidden>
+          <label>暖色基调强度 <b id="vWarmCast">0.40</b></label>
+          <input type="range" id="warmCast" min="0" max="1" step="0.05" value="0.4">
+        </div>
+
+        <div class="two">
+          <div class="ctl">
+            <label>亮度 <b id="vBrightness">0</b></label>
+            <input type="range" id="brightness" min="-100" max="100" step="1" value="0">
+          </div>
+          <div class="ctl">
+            <label>对比度 <b id="vContrast">0</b></label>
+            <input type="range" id="contrast" min="-100" max="100" step="1" value="0">
+          </div>
+        </div>
+
+        <div class="ctl">
+          <label>细节增强 <b id="vSharpen">0.30</b></label>
+          <input type="range" id="sharpen" min="0" max="1.5" step="0.05" value="0.3">
+        </div>
+
+        <details class="adv">
+          <summary>高级参数</summary>
+          <div class="in">
+            <div class="two">
+              <div class="ctl">
+                <label>暖色基准 <b id="vWarmCenter">30°</b></label>
+                <input type="range" id="warmCenter" min="0" max="60" step="1" value="30">
+              </div>
+              <div class="ctl">
+                <label>冷色漂移上限 <b id="vCoolCap">60°</b></label>
+                <input type="range" id="coolCap" min="0" max="120" step="5" value="60">
+              </div>
+            </div>
+            <div class="two m-natural">
+              <div class="ctl">
+                <label>冷色去饱和 <b id="vCoolDesat">0.25</b></label>
+                <input type="range" id="coolDesat" min="0" max="0.8" step="0.05" value="0.25">
+              </div>
+              <div class="ctl">
+                <label>暖色归拢 <b id="vWarmPull">0.12</b></label>
+                <input type="range" id="warmPull" min="0" max="0.5" step="0.02" value="0.12">
+              </div>
+            </div>
+            <div class="two m-adaptive" hidden>
+              <div class="ctl">
+                <label>色相压缩幅度 <b id="vWarmSpan">58°</b></label>
+                <input type="range" id="warmSpan" min="0" max="360" step="2" value="58">
+              </div>
+              <div class="ctl">
+                <label>基调渐变</label>
+                <select id="castRamp">
+                  <option value="sunset">日落</option>
+                  <option value="ember">余烬</option>
+                  <option value="duotone">红黄双色</option>
+                  <option value="sepia">棕褐</option>
+                </select>
+              </div>
+            </div>
+            <div class="ctl">
+              <label>抖动算法</label>
+              <select id="dither">
+                <option value="fs">Floyd-Steinberg（推荐）</option>
+                <option value="atkinson">Atkinson（更干净）</option>
+                <option value="bayer">Bayer 有序（无噪点纹）</option>
+                <option value="none">不抖动（最近色）</option>
+              </select>
+            </div>
+            <div class="ctl">
+              <label>抖动强度 <b id="vDitherStrength">0.85</b></label>
+              <input type="range" id="ditherStrength" min="0" max="1" step="0.05" value="0.85">
+            </div>
+            <div class="two">
+              <div class="ctl">
+                <label>自动色阶 <b id="vAutoLevels">开</b></label>
+                <input type="range" id="autoLevels" min="0" max="1" step="1" value="1">
+              </div>
+              <div class="ctl">
+                <label>裁剪比例 <b id="vAutoClip">0.50%</b></label>
+                <input type="range" id="autoClip" min="0" max="0.05" step="0.005" value="0.005">
+              </div>
+            </div>
+            <div class="ctl">
+              <label>RAW 索引顺序</label>
+              <select id="rawOrder">
+                <option value="kwry">黑 白 红 黄</option>
+                <option value="kwyr">黑 白 黄 红</option>
+              </select>
+            </div>
+            <div class="ctl">
+              <label>伽马 <b id="vGamma">1.00</b></label>
+              <input type="range" id="gamma" min="0.3" max="2.5" step="0.05" value="1">
+            </div>
+            <label class="auto" style="margin-top:4px"><input type="checkbox" id="invert">反相（底片效果）</label>
+          </div>
+        </details>
+
+        <details class="adv" open>
+          <summary>输出设置</summary>
+          <div class="in">
+            <div class="ctl">
+              <label>目标屏幕</label>
+              <select id="panel"></select>
+            </div>
+            <div class="two" id="custWrap" hidden>
+              <div class="ctl"><label>宽 <b id="vCw">768</b></label><input type="range" id="cw" min="64" max="2000" step="1" value="768"></div>
+              <div class="ctl"><label>高 <b id="vCh">552</b></label><input type="range" id="ch" min="64" max="2000" step="1" value="552"></div>
+            </div>
+            <div class="ctl">
+              <label>适配方式</label>
+              <select id="fit">
+                <option value="cover">裁满全屏（推荐）</option>
+                <option value="contain">完整放入（留白边）</option>
+                <option value="stretch">拉伸变形</option>
+              </select>
+            </div>
+            <label class="auto"><input type="checkbox" id="showFar" checked>显示「远观效果」预览</label>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <!-- ========== 导入 ========== -->
+    <section class="card a-imp">
+      <h2>照片</h2>
+      <div class="bd">
+        <div id="drop">
+          <div class="big">点击、拖入或 Ctrl+V 粘贴</div>
+          <div class="sm">手机可直接拍照</div>
+          <input type="file" id="file" accept="image/*" style="display:none">
+        </div>
+        <div class="thumbbar">
+          <canvas id="cvThumb" width="108" height="78"></canvas>
+          <div style="flex:1;min-width:0">
+            <div class="row">
+              <button id="btnCrop">裁剪 / 旋转</button>
+              <button id="btnDemo" class="ghost">示例照片</button>
+            </div>
+            <div class="hint" id="cropInfo" style="margin-top:5px">尚未导入照片</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 预览 ========== -->
+    <section class="card a-pv">
+      <h2>预览 <span class="tag" id="szTag"></span></h2>
+      <div class="bd">
+        <div class="pv-grid">
+          <div class="pv">
+            <div class="cap">原图</div>
+            <div class="frame"><canvas id="cvSrc" class="pvc"></canvas></div>
+          </div>
+          <div class="pv">
+            <div class="cap"><span class="sw" style="background:conic-gradient(#1a1a1a 0 25%,#fdfdfd 0 50%,#e3342b 0 75%,#f2b500 0)"></span>墨水屏效果</div>
+            <div class="frame"><canvas id="cvShade" class="pvc"></canvas></div>
+          </div>
+          <div class="pv" id="pvFar">
+            <div class="cap">远观效果</div>
+            <div class="frame"><canvas id="cvFar" class="pvc"></canvas></div>
+          </div>
+        </div>
+        <div class="stats">
+          <div class="st"><div class="k"><span class="sw" style="background:#f2b500"></span>黄</div><div class="v" id="pYellow">&ndash;</div></div>
+          <div class="st"><div class="k"><span class="sw" style="background:#e3342b"></span>红</div><div class="v" id="pRed">&ndash;</div></div>
+          <div class="st"><div class="k"><span class="sw" style="background:linear-gradient(90deg,#e3342b,#f2b500)"></span>红+黄</div><div class="v" id="pChroma">&ndash;</div></div>
+          <div class="st"><div class="k"><span class="sw" style="background:#fdfdfd"></span>白</div><div class="v" id="pWhite">&ndash;</div></div>
+          <div class="st"><div class="k"><span class="sw" style="background:#1a1a1a"></span>黑</div><div class="v" id="pBlack">&ndash;</div></div>
+        </div>
+        <div id="verdict">导入照片后开始处理。</div>
+      </div>
+    </section>
+
+    <!-- ========== 导出 ========== -->
+    <section class="card a-exp">
+      <h2>导出</h2>
+      <div class="bd">
+        <div class="row">
+          <button id="expPng" class="primary grow2">PNG（四色抖动）</button>
+          <button id="expIdx">四色索引 PNG</button>
+        </div>
+        <div class="row mt">
+          <button id="expBmp">BMP</button>
+          <button id="expRaw">RAW 2bpp</button>
+          <button id="btnCopy" class="ghost">复制图片</button>
+          <button id="btnZoom" class="ghost">1:1 查看</button>
+        </div>
+        <div class="row mt" style="border-top:1px dashed var(--line2);padding-top:10px">
+          <button id="expFlat">连续调彩图（未抖动）</button>
+          <button id="expDitherOnly">仅抖动图（无色转）</button>
+        </div>
+        <div id="outInfo"></div>
+        <details class="adv">
+          <summary>说明</summary>
+          <div class="in hint" style="margin:0">
+            这块屏只能混出「红→橙→黄」，做不出蓝和青，所以纯冷色区域会以中性灰呈现。
+            <b>连续调彩图</b>未做抖动，适合上传给自带抖动功能的软件。
+            <b>仅抖动图</b>只抖成四色、不做色转。
+            刷出来仍是黑白，多半是上位机又做了一次二值化，请改用四色索引 PNG 或 RAW。
+          </div>
+        </details>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- ========== 1:1 查看 ========== -->
+<div class="ovl" id="zoom">
+  <div class="ovl-box">
+    <div class="ovl-head"><b>1:1 实际像素</b><span class="sp"></span><button id="zoomClose">关闭</button></div>
+    <div class="ovl-stage"><canvas id="cvZoom" style="image-rendering:pixelated"></canvas></div>
+    <div class="ovl-tip">贴近屏幕看，就是墨水屏上真实的点子排列</div>
+  </div>
+</div>
+
+<!-- ========== 裁剪 / 旋转 ========== -->
+<div class="ovl" id="cropModal">
+  <div class="ovl-box" style="width:min(980px,100%)">
+    <div class="ovl-head">
+      <b>调整构图</b>
+      <button id="cmRotL" title="向左旋转 90°">&#8634; 90°</button>
+      <button id="cmRotR" title="向右旋转 90°">&#8635; 90°</button>
+      <select id="cmAspect">
+        <option value="0">自由裁剪</option>
+        <option value="-1">屏幕比例</option>
+        <option value="1">1 : 1</option>
+        <option value="1.3333">4 : 3</option>
+        <option value="0.75">3 : 4</option>
+        <option value="1.5">3 : 2</option>
+        <option value="1.7778">16 : 9</option>
+      </select>
+      <button id="cmReset">重置</button>
+      <span class="sp"></span>
+      <button id="cmCancel">取消</button>
+      <button id="cmOk" class="primary">确定</button>
+    </div>
+    <div class="ovl-stage"><canvas id="cmCanvas"></canvas></div>
+    <div class="ovl-tip">拖动方框移动 · 拖四角缩放 · 点空白处重新框选</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+'use strict';
+
+/* ==================================================================
+   0. 基础
+   ================================================================== */
+var VERSION = '2.1';
+var K = 0, W = 1, R = 2, Y = 3;
+var PALETTE = [[0,0,0],[255,255,255],[255,0,0],[255,255,0]];
+var PREVIEW_MAX = 560;
+
+var RAMPS = {
+  sunset: [[0.00,[0,0,0]],[0.10,[26,6,4]],[0.26,[92,18,12]],[0.42,[168,40,16]],
+           [0.56,[214,86,18]],[0.70,[236,140,26]],[0.84,[248,200,60]],[0.93,[255,235,150]],[1.00,[255,255,255]]],
+  ember:  [[0.00,[0,0,0]],[0.12,[40,4,0]],[0.28,[120,10,4]],[0.44,[196,28,6]],
+           [0.58,[232,74,6]],[0.72,[246,140,10]],[0.86,[252,204,26]],[0.95,[255,240,110]],[1.00,[255,255,255]]],
+  duotone:[[0.00,[0,0,0]],[0.30,[150,20,10]],[0.55,[235,80,10]],[0.78,[250,190,20]],[1.00,[255,255,255]]],
+  sepia:  [[0.00,[22,14,8]],[0.25,[92,66,38]],[0.50,[150,116,72]],[0.72,[202,172,124]],[0.88,[232,212,172]],[1.00,[255,250,236]]]
+};
+
+var DEFAULTS = {
+  mode:'natural',
+  brightness:0, contrast:0, gamma:1,
+  saturation:1.00,
+  warmCast:0.40, castRamp:'sunset', warmCenter:30, warmSpan:58,
+  warmBoost:0.60, coolPull:0.25, coolCap:60, coolDesat:0.25, warmPull:0.12, warmPullCap:18,
+  autoLevels:1, autoClip:0.005, sharpen:0.30, invert:0,
+  dither:'fs', ditherStrength:0.85
+};
+
+var PANELS = [
+  [768,552,'华为 nova14 墨水屏壳 768×552'],
+  [800,480,'7.5 寸 800×480'],
+  [600,448,'5.65 寸 600×448'],
+  [400,300,'4.2 寸 400×300'],
+  [296,128,'2.9 寸 296×128'],
+  [264,176,'2.7 寸 264×176'],
+  [200,200,'1.54 寸 200×200'],
+  [1600,1200,'13.3 寸 1600×1200'],
+  [-1,-1,'自定义尺寸…']
+];
+
+var MODE_HINT = {
+  natural : '只提亮本来偏暖的色调（肤色、木质、夕阳），偏蓝的区域保持中性。',
+  adaptive: '把整幅图都压进红黄带，红黄用量最大，画面会明显暖化。',
+  sunset  : '按明暗套用日落渐变色，颜色最饱满。',
+  ember   : '按明暗套用余烬渐变色，比日落更炽烈。',
+  duotone : '只有红与黄两个色相，最像丝网印刷。',
+  sepia   : '棕褐老照片质感，颜色最含蓄。',
+  gray    : '不做色彩转换，纯黑白抖动。',
+  naive   : '不做任何色彩映射，用来对照原图的原始表现。'
+};
+
+var el = function(id){ return document.getElementById(id); };
+var clamp = function(v,a,b){ return v<a?a:(v>b?b:v); };
+var mod = function(a,n){ return ((a%n)+n)%n; };
+var canvasOf = function(w,h){ var c=document.createElement('canvas'); c.width=w; c.height=h; return c; };
+var ctxOf = function(cv){ return cv.getContext('2d',{willReadFrequently:true}); };
+var fmtKB = function(n){ return n<1024 ? n+' B' : (n/1024).toFixed(n<102400?1:0)+' KB'; };
+
+var state = { orig:null, img:null, rot:0, crop:{x:0,y:0,w:1,h:1}, demo:false };
+
+/* ==================================================================
+   1. 色彩与抖动内核
+   —— 与 eink_warm.py 逐行对应，改动任意一侧必须同步另一侧
+   ================================================================== */
+
+function luma(r,g,b){ return r*0.2126 + g*0.7152 + b*0.0722; }
+
+function rampLut(name, n){
+  n = n || 256;
+  var stops = RAMPS[name], out = new Float64Array(n*3), i, c;
+  for (c=0;c<3;c++){
+    for (i=0;i<n;i++){
+      var t = i/(n-1), v = stops[stops.length-1][1][c];
+      if (t <= stops[0][0]) v = stops[0][1][c];
+      else {
+        for (var s=1;s<stops.length;s++){
+          if (t <= stops[s][0]){
+            var t0 = stops[s-1][0], t1 = stops[s][0];
+            var f = (t1-t0) > 1e-12 ? (t-t0)/(t1-t0) : 0;
+            v = stops[s-1][1][c] + (stops[s][1][c]-stops[s-1][1][c])*f;
+            break;
+          }
+        }
+      }
+      out[i*3+c] = v;
+    }
+  }
+  return out;
+}
+
+function pctFromHist(hist, q, total){
+  var target = q*total, c = 0;
+  for (var i=0;i<256;i++){ c += hist[i]; if (c >= target) return i; }
+  return 255;
+}
+
+function autoLevelsFlat(buf, w, h, clip){
+  var n = w*h, hist = new Float64Array(256), i, L;
+  for (i=0;i<n;i++){
+    L = luma(buf[i*3], buf[i*3+1], buf[i*3+2]);
+    hist[clamp(Math.floor(L+0.5),0,255)]++;
+  }
+  var lo = pctFromHist(hist, clip, n), hi = pctFromHist(hist, 1-clip, n);
+  if (hi - lo < 8) return buf;
+  var scale = (246-18)/(hi-lo), out = new Float64Array(n*3);
+  for (i=0;i<n*3;i++) out[i] = (buf[i]-lo)*scale + 18;
+  return out;
+}
+
+function blur3Flat(buf, w, h){
+  var tmp = new Float64Array(w*h*3), out = new Float64Array(w*h*3), x, y, c;
+  for (y=0;y<h;y++) for (x=0;x<w;x++){
+    var xm = (x>0?x-1:0)*3, xp = (x<w-1?x+1:w-1)*3, o = (y*w+x)*3, b = y*w*3;
+    for (c=0;c<3;c++) tmp[o+c] = (buf[b+xm+c] + 2*buf[b+x*3+c] + buf[b+xp+c])*0.25;
+  }
+  for (y=0;y<h;y++) for (x=0;x<w;x++){
+    var ym = (y>0?y-1:0)*w*3, yp = (y<h-1?y+1:h-1)*w*3, o2 = (y*w+x)*3;
+    for (c=0;c<3;c++) out[o2+c] = (tmp[ym+x*3+c] + 2*tmp[y*w*3+x*3+c] + tmp[yp+x*3+c])*0.25;
+  }
+  return out;
+}
+
+function unsharpFlat(buf, w, h, amount){
+  if (amount <= 0) return buf;
+  var b = blur3Flat(buf, w, h), out = new Float64Array(buf.length);
+  for (var i=0;i<buf.length;i++) out[i] = buf[i] + amount*(buf[i]-b[i]);
+  return out;
+}
+
+function rgb2hsl(r,g,b){
+  var mx = Math.max(r,g,b), mn = Math.min(r,g,b), l = (mx+mn)*0.5, d = mx-mn;
+  var den = l > 0.5 ? 2-mx-mn : mx+mn;
+  var s = d > 1e-12 ? d/Math.max(den,1e-12) : 0;
+  if (s < 0) s = 0;
+  if (s > 1) s = 1;
+  var rc = (mx-r)/Math.max(d,1e-12), gc = (mx-g)/Math.max(d,1e-12), bc = (mx-b)/Math.max(d,1e-12);
+  var h = mx===r ? (bc-gc) : (mx===g ? 2+rc-bc : 4+gc-rc);
+  h = mod(h/6, 1);
+  if (!(d > 1e-12)) h = 0;
+  return [h, s, l];
+}
+
+function hue2rgb(p,q,t){
+  t = mod(t,1);
+  if (t < 1/6) return p + (q-p)*6*t;
+  if (t < 0.5) return q;
+  if (t < 2/3) return p + (q-p)*(2/3-t)*6;
+  return p;
+}
+
+function hsl2rgb(h,s,l){
+  var q = l < 0.5 ? l*(1+s) : l+s-l*s, p = 2*l-q;
+  return [hue2rgb(p,q,h+1/3), hue2rgb(p,q,h), hue2rgb(p,q,h-1/3)];
+}
+
+/* 暖色亲和度：这块屏能混出的色域只有 红→橙→黄，即色相 350..360 与 0..60。
+   落在这里的像素给满分，随后 50 度平滑衰减到 0。黄绿（草叶）落在坡道上，
+   只会被轻轻推一把，不会被硬拽进暖色带。 */
+function warmAffinity(hdeg){
+  if (hdeg > 300){
+    var t = clamp((hdeg-300)/50, 0, 1);
+    return t*t*(3-2*t);
+  }
+  if (hdeg < 110){
+    var t2 = clamp((hdeg-60)/50, 0, 1);
+    return 1 - t2*t2*(3-2*t2);
+  }
+  return 0;
+}
+
+/* 暖色饱和度提升强度：s -> s^(1 - WARM_SAT_K*g)，g = warmBoost*亲和度。
+   用幂律而不是「向满饱和靠拢」的线性插值，是因为后者会把接近中性的暖色
+   （米色织物、浅肤色、旧砖）直接推到接近纯红，照片就不再像它自己了。
+   幂律单调且 0→0、1→1，能保住暖色之间的饱和度比例：含蓄的仍然含蓄。 */
+var WARM_SAT_K = 0.75;
+
+function warmMapFlat(buf, w, h, p){
+  var cfg = {}, k;
+  for (k in DEFAULTS) cfg[k] = DEFAULTS[k];
+  if (p) for (k in p) if (k in DEFAULTS) cfg[k] = p[k];
+
+  var i, n = w*h, x = new Float64Array(n*3);
+  for (i=0;i<n*3;i++) x[i] = buf[i];
+
+  if (cfg.invert) for (i=0;i<n*3;i++) x[i] = 255 - x[i];
+  if (cfg.brightness) for (i=0;i<n*3;i++) x[i] += cfg.brightness;
+  if (cfg.contrast){
+    var cg = 1 + cfg.contrast/100;
+    for (i=0;i<n*3;i++) x[i] = (x[i]-128)*cg + 128;
+  }
+  if (cfg.gamma !== 1){
+    for (i=0;i<n*3;i++) x[i] = 255*Math.pow(clamp(x[i],0,255)/255, cfg.gamma);
+  }
+  for (i=0;i<n*3;i++) x[i] = clamp(x[i], 0, 255);
+
+  if (cfg.autoLevels) x = autoLevelsFlat(x, w, h, cfg.autoClip);
+  for (i=0;i<n*3;i++) x[i] = clamp(x[i], 0, 255);
+
+  x = unsharpFlat(x, w, h, cfg.sharpen);
+  for (i=0;i<n*3;i++) x[i] = clamp(x[i], 0, 255);
+
+  var mode = cfg.mode;
+
+  /* 对照模式：不做任何色彩映射，直接把原图丢给四色抖动 */
+  if (mode === 'naive'){
+    var cp0 = new Float64Array(n*3);
+    for (i=0;i<n*3;i++) cp0[i] = x[i];
+    return cp0;
+  }
+
+  if (mode === 'natural'){
+    var vb = cfg.warmBoost, cpl = cfg.coolPull, cd = cfg.coolDesat, cap = cfg.coolCap;
+    var wp = cfg.warmPull, wcap = cfg.warmPullCap, cen = cfg.warmCenter, gs = cfg.saturation;
+    var out = new Float64Array(n*3);
+    for (i=0;i<n;i++){
+      var hsl = rgb2hsl(x[i*3]/255, x[i*3+1]/255, x[i*3+2]/255);
+      var hd = hsl[0]*360, s = hsl[1], l = hsl[2], wa = warmAffinity(hd);
+      /* 暖色侧：幂律提升饱和度（单调、保序） */
+      var gg = clamp(vb*wa, 0, 1);
+      var s2 = Math.pow(s, 1 - WARM_SAT_K*gg);
+      /* 冷色侧：向中性回拉一部分，避免出现发脏的偏移色 */
+      s2 = s2 * (1 - clamp(cd*(1-wa), 0, 1));
+      s2 = clamp(s2*gs, 0, 1);
+      /* 色相偏移：两项都按 wa 加权混合，而不是在 hd>60 处硬切换。
+         硬切换会让暖色侧做归拢、冷色侧不做，接缝处出现 3~5 度的跳变，
+         既会让平滑渐变出现等值线，也让结果受浮点末位支配。 */
+      var drift = -cpl*(1-wa)*(hd-60);
+      if (drift > 0) drift = 0; else if (drift < -cap) drift = -cap;
+      var d2 = mod(cen - hd + 180, 360) - 180;
+      var pull = wp*d2;
+      if (pull > wcap) pull = wcap; else if (pull < -wcap) pull = -wcap;
+      var h2 = mod(hd + drift + wa*pull, 360);
+      var fin = hsl2rgb(h2/360, s2, l);
+      out[i*3]   = clamp(fin[0]*255, 0, 255);
+      out[i*3+1] = clamp(fin[1]*255, 0, 255);
+      out[i*3+2] = clamp(fin[2]*255, 0, 255);
+    }
+    return out;
+  }
+
+  /* 其余模式都按亮度查渐变表 */
+  var li = new Int32Array(n);
+  for (i=0;i<n;i++) li[i] = clamp(Math.floor(luma(x[i*3],x[i*3+1],x[i*3+2])+0.5), 0, 255);
+
+  if (mode === 'adaptive'){
+    var lut2 = rampLut(cfg.castRamp), cast = cfg.warmCast, y2 = new Float64Array(n*3);
+    for (i=0;i<n;i++){
+      var q = rgb2hsl(x[i*3]/255, x[i*3+1]/255, x[i*3+2]/255);
+      var hd2 = cfg.warmCenter + (q[0]-0.5)*cfg.warmSpan;
+      var c1 = hsl2rgb(mod(hd2,360)/360, q[1], q[2]);
+      var rr = clamp(c1[0]*255,0,255), gg = clamp(c1[1]*255,0,255), bb = clamp(c1[2]*255,0,255);
+      var lm = clamp(Math.floor(luma(rr,gg,bb)+0.5), 0, 255);
+      /* 先与暖色渐变基调混合，再统一施加色彩强度（顺序不能颠倒） */
+      var br = clamp(rr*(1-cast) + lut2[lm*3]*cast, 0, 255);
+      var bg = clamp(gg*(1-cast) + lut2[lm*3+1]*cast, 0, 255);
+      var bz = clamp(bb*(1-cast) + lut2[lm*3+2]*cast, 0, 255);
+      var lq = rgb2hsl(br/255, bg/255, bz/255);
+      lq[1] = clamp(lq[1]*cfg.saturation, 0, 1);
+      var c2 = hsl2rgb(lq[0], lq[1], lq[2]);
+      y2[i*3]   = clamp(c2[0]*255, 0, 255);
+      y2[i*3+1] = clamp(c2[1]*255, 0, 255);
+      y2[i*3+2] = clamp(c2[2]*255, 0, 255);
+    }
+    return y2;
+  }
+
+  if (mode === 'gray'){
+    var g = new Float64Array(n*3);
+    for (i=0;i<n;i++){
+      var L = clamp(luma(x[i*3],x[i*3+1],x[i*3+2]), 0, 255);
+      g[i*3] = g[i*3+1] = g[i*3+2] = L;
+    }
+    return g;
+  }
+
+  var lut = rampLut(mode), amt = clamp(cfg.saturation, 0, 1.5), yo = new Float64Array(n*3);
+  for (i=0;i<n;i++){
+    var Lg = clamp(luma(x[i*3],x[i*3+1],x[i*3+2]), 0, 255);
+    yo[i*3]   = clamp(Lg*(1-amt) + lut[li[i]*3]*amt, 0, 255);
+    yo[i*3+1] = clamp(Lg*(1-amt) + lut[li[i]*3+1]*amt, 0, 255);
+    yo[i*3+2] = clamp(Lg*(1-amt) + lut[li[i]*3+2]*amt, 0, 255);
+  }
+  return yo;
+}
+
+var FS  = [[1,0,7/16],[-1,1,3/16],[0,1,5/16],[1,1,1/16]];
+var ATK = [[1,0,1/8],[2,0,1/8],[-1,1,1/8],[0,1,1/8],[1,1,1/8],[0,2,1/8]];
+var BAYER8 = [
+  [ 0,32, 8,40, 2,34,10,42],[48,16,56,24,50,18,58,26],
+  [12,44, 4,36,14,46, 6,38],[60,28,52,20,62,30,54,22],
+  [ 3,35,11,43, 1,33, 9,41],[51,19,59,27,49,17,57,25],
+  [15,47, 7,39,13,45, 5,37],[63,31,55,23,61,29,53,21]
+];
+
+function ditherFlat(img, w, h, mode, strength){
+  mode = mode || 'fs';
+  if (strength === undefined || strength === null) strength = 0.85;
+  var flat = new Float64Array(img.length);
+  flat.set(img);
+  var out = new Uint8Array(w*h);
+
+  function nearest(o){
+    var r = flat[o], g = flat[o+1], b = flat[o+2], bi = 0, bd = Infinity;
+    for (var k=0;k<4;k++){
+      var p = PALETTE[k];
+      var dr = r-p[0], dg = g-p[1], db = b-p[2];
+      var d = dr*dr + dg*dg + db*db;
+      if (d < bd){ bd = d; bi = k; }
+    }
+    return bi;
+  }
+
+  if (mode === 'none'){
+    for (var y0=0;y0<h;y0++){
+      var b0 = y0*w*3;
+      for (var x0=0;x0<w;x0++) out[y0*w+x0] = nearest(b0 + x0*3);
+    }
+    return out;
+  }
+
+  if (mode === 'bayer'){
+    var amp = strength*128;
+    for (var y1=0;y1<h;y1++){
+      var row = y1 & 7, b1 = y1*w*3;
+      for (var x1=0;x1<w;x1++){
+        var o1 = b1 + x1*3, off = (BAYER8[row][x1 & 7]/64 - 0.5)*amp;
+        flat[o1]   = clamp(flat[o1]+off, 0, 255);
+        flat[o1+1] = clamp(flat[o1+1]+off, 0, 255);
+        flat[o1+2] = clamp(flat[o1+2]+off, 0, 255);
+        out[y1*w+x1] = nearest(o1);
+      }
+    }
+    return out;
+  }
+
+  var kernel = (mode === 'fs') ? FS : ATK;
+  for (var y=0;y<h;y++){
+    var ltr = (y % 2 === 0), base = y*w*3;
+    for (var i=0;i<w;i++){
+      var x = ltr ? i : w-1-i, o = base + x*3;
+      var k2 = nearest(o);
+      out[y*w+x] = k2;
+      if (strength <= 0) continue;
+      var pal = PALETTE[k2];
+      var er = (flat[o]-pal[0])*strength, eg = (flat[o+1]-pal[1])*strength, eb = (flat[o+2]-pal[2])*strength;
+      for (var m=0;m<kernel.length;m++){
+        var nx = x + (ltr ? kernel[m][0] : -kernel[m][0]), ny = y + kernel[m][1];
+        if (nx >= 0 && nx < w && ny < h){
+          var no = (ny*w+nx)*3;
+          flat[no]   += er*kernel[m][2];
+          flat[no+1] += eg*kernel[m][2];
+          flat[no+2] += eb*kernel[m][2];
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function statsFromIndex(idx){
+  var n = idx.length, c = [0,0,0,0];
+  for (var i=0;i<n;i++) c[idx[i]]++;
+  return { black:c[K]/n, white:c[W]/n, red:c[R]/n, yellow:c[Y]/n,
+           chroma:(c[R]+c[Y])/n, bw:(c[K]+c[W])/n };
+}
+
+/* ==================================================================
+   2. 画布
+   ================================================================== */
+function canvasToBuf(src, w, h){
+  var c = canvasOf(w,h), cx = ctxOf(c);
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high';
+  cx.drawImage(src, 0, 0, w, h);
+  var d = cx.getImageData(0,0,w,h).data;
+  var buf = new Float64Array(w*h*3);
+  for (var i=0,j=0;i<buf.length;i+=3,j+=4){ buf[i]=d[j]; buf[i+1]=d[j+1]; buf[i+2]=d[j+2]; }
+  return buf;
+}
+
+function bufToImageData(buf, w, h, continuous){
+  var id = new ImageData(w,h), d = id.data;
+  if (continuous){
+    for (var i=0;i<w*h;i++){
+      d[i*4]=buf[i*3]; d[i*4+1]=buf[i*3+1]; d[i*4+2]=buf[i*3+2]; d[i*4+3]=255;
+    }
+  } else {
+    for (var j=0;j<w*h;j++){
+      var p = PALETTE[buf[j]|0];
+      d[j*4]=p[0]; d[j*4+1]=p[1]; d[j*4+2]=p[2]; d[j*4+3]=255;
+    }
+  }
+  return id;
+}
+
+/* 构图（旋转 + 裁剪）烘焙成工作图 */
+function buildEdited(){
+  var img = state.orig;
+  if (!img) return null;
+  var sw = img.width, sh = img.height, rot = mod(state.rot,360);
+  var rw = (rot % 180) ? sh : sw, rh = (rot % 180) ? sw : sh;
+  var tmp = canvasOf(rw, rh), tc = ctxOf(tmp);
+  tc.save();
+  tc.translate(Math.round(rw/2), Math.round(rh/2));
+  tc.rotate(rot*Math.PI/180);
+  tc.drawImage(img, -Math.round(sw/2), -Math.round(sh/2));
+  tc.restore();
+  var c = state.crop;
+  if (c.x <= 0.0005 && c.y <= 0.0005 && c.w >= 0.999 && c.h >= 0.999) return tmp;
+  var cw = Math.max(1, Math.round(c.w*rw)), ch = Math.max(1, Math.round(c.h*rh));
+  var cx = clamp(Math.round(c.x*rw), 0, Math.max(0,rw-cw)), cy = clamp(Math.round(c.y*rh), 0, Math.max(0,rh-ch));
+  var out = canvasOf(cw, ch);
+  ctxOf(out).drawImage(tmp, cx, cy, cw, ch, 0, 0, cw, ch);
+  return out;
+}
+
+/* ==================================================================
+   3. 渲染
+   ================================================================== */
+function targetPanelSize(){
+  var v = el('panel').value;
+  if (v === 'custom') return [ +el('cw').value, +el('ch').value ];
+  var parts = v.split('x');
+  return [ +parts[0], +parts[1] ];
+}
+
+function renderSource(){
+  var cv = el('cvShade'), src = state.img;
+  if (!src){ cv.width = 0; cv.height = 0; el('cvSrc').width = 0; el('cvSrc').height = 0; return null; }
+  var ps = targetPanelSize(), w = ps[0], h = ps[1];
+  var s = Math.min(PREVIEW_MAX/w, PREVIEW_MAX*0.82/h, 1);
+  var pw = Math.max(1, Math.round(w*s)), ph = Math.max(1, Math.round(h*s));
+
+  var srcBuf = canvasToBuf(src, w, h);
+
+  var sc = el('cvSrc');
+  sc.width = pw; sc.height = ph;
+  var sx = ctxOf(sc);
+  sx.imageSmoothingEnabled = true; sx.imageSmoothingQuality = 'high';
+  sx.drawImage(src, 0, 0, pw, ph);
+
+  return { w:w, h:h, pw:pw, ph:ph, srcBuf:srcBuf };
+}
+
+/* 把四色索引放大到预览尺寸：用最近邻，保留真实的点子颗粒 */
+function blitIndex(cv, idx, small){
+  var tmp = canvasOf(small.w, small.h);
+  ctxOf(tmp).putImageData(bufToImageData(idx, small.w, small.h, false), 0, 0);
+  cv.width = small.pw; cv.height = small.ph;
+  var d = ctxOf(cv);
+  d.imageSmoothingEnabled = false;
+  d.clearRect(0,0,small.pw,small.ph);
+  d.drawImage(tmp, 0, 0, small.pw, small.ph);
+}
+
+function drawFar(cv){
+  var shade = el('cvShade');
+  var w = Math.max(72, Math.round((shade.clientWidth || 200)/2.6));
+  var h = Math.max(40, Math.round(w*shade.height/Math.max(1,shade.width)));
+  cv.width = w; cv.height = h;
+  var cx = ctxOf(cv);
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high';
+  cx.fillStyle = '#faf8f5'; cx.fillRect(0,0,w,h);
+  cx.drawImage(shade, 0, 0, w, h);
+}
+
+var lastStats = null;
+
+function render(){
+  var small = renderSource();
+  if (!small){
+    lastStats = null;
+    el('szTag').textContent = '';
+    el('verdict').className = '';
+    el('verdict').textContent = '导入照片后开始处理。';
+    ['pYellow','pRed','pChroma','pWhite','pBlack'].forEach(function(id){ el(id).textContent = '\u2013'; });
+    return;
+  }
+  var cfg = readCfg();
+  var mapped = warmMapFlat(small.srcBuf, small.w, small.h, cfg);
+  var idx = ditherFlat(mapped, small.w, small.h, cfg.dither, cfg.ditherStrength);
+  var st = statsFromIndex(idx);
+  lastStats = st;
+
+  blitIndex(el('cvShade'), idx, small);
+  if (el('showFar').checked){ el('pvFar').hidden = false; drawFar(el('cvFar')); }
+  else el('pvFar').hidden = true;
+
+  el('szTag').textContent = small.w + ' × ' + small.h;
+  el('pYellow').textContent = (st.yellow*100).toFixed(1)+'%';
+  el('pRed').textContent    = (st.red*100).toFixed(1)+'%';
+  el('pChroma').textContent = (st.chroma*100).toFixed(1)+'%';
+  el('pWhite').textContent  = (st.white*100).toFixed(1)+'%';
+  el('pBlack').textContent  = (st.black*100).toFixed(1)+'%';
+
+  var v = el('verdict'), m = cfg.mode, txt, cls = '';
+  if (m === 'naive' || m === 'gray'){
+    txt = '对照模式：未做色彩转换，红黄合计 ' + (st.chroma*100).toFixed(1) + '%。';
+  } else if (st.chroma < 0.06){
+    txt = '红黄只有 ' + (st.chroma*100).toFixed(1) + '%，画面接近黑白——这张照片本身就偏冷。可提高「暖色鲜艳度/冷色偏移」，或改用「全面暖色映射」。';
+    cls = 'warn';
+  } else if (st.chroma < 0.16){
+    txt = '红黄合计 ' + (st.chroma*100).toFixed(1) + '%，色彩偏含蓄。想更鲜艳可调高「暖色鲜艳度」。';
+    cls = 'warn';
+  } else {
+    txt = '红黄合计 ' + (st.chroma*100).toFixed(1) + '%，这个用量在四色屏上很舒服。';
+    cls = 'ok';
+  }
+  v.className = cls; v.textContent = txt;
+}
+
+function renderThumb(){
+  var cv = el('cvThumb');
+  var cx = ctxOf(cv);
+  cx.clearRect(0,0,cv.width,cv.height);
+  if (!state.img) return;
+  var s = Math.min(cv.width/state.img.width, cv.height/state.img.height);
+  var w = Math.max(1,Math.round(state.img.width*s)), h = Math.max(1,Math.round(state.img.height*s));
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high';
+  cx.drawImage(state.img, (cv.width-w)/2, (cv.height-h)/2, w, h);
+}
+
+/* ==================================================================
+   4. 控件
+   ================================================================== */
+var RANGES = [
+  ['warmBoost','vWarmBoost',function(v){return v.toFixed(2)}],
+  ['coolPull','vCoolPull',function(v){return v.toFixed(2)}],
+  ['coolCap','vCoolCap',function(v){return v.toFixed(0)+'\u00B0'}],
+  ['coolDesat','vCoolDesat',function(v){return v.toFixed(2)}],
+  ['warmPull','vWarmPull',function(v){return v.toFixed(2)}],
+  ['saturation','vSaturation',function(v){return v.toFixed(2)}],
+  ['warmCast','vWarmCast',function(v){return v.toFixed(2)}],
+  ['warmCenter','vWarmCenter',function(v){return v.toFixed(0)+'\u00B0'}],
+  ['warmSpan','vWarmSpan',function(v){return v.toFixed(0)+'\u00B0'}],
+  ['brightness','vBrightness',function(v){return (v>0?'+':'')+v.toFixed(0)}],
+  ['contrast','vContrast',function(v){return (v>0?'+':'')+v.toFixed(0)}],
+  ['sharpen','vSharpen',function(v){return v.toFixed(2)}],
+  ['ditherStrength','vDitherStrength',function(v){return v.toFixed(2)}],
+  ['gamma','vGamma',function(v){return v.toFixed(2)}],
+  ['autoClip','vAutoClip',function(v){return (v*100).toFixed(2)+'%'}],
+  ['autoLevels','vAutoLevels',function(v){return v>=0.5?'\u5F00':'\u5173'}],
+  ['cw','vCw',function(v){return v.toFixed(0)}],
+  ['ch','vCh',function(v){return v.toFixed(0)}]
+];
+
+function readCfg(){
+  var c = {};
+  for (var k in DEFAULTS){
+    var n = el(k);
+    if (!n){ c[k] = DEFAULTS[k]; continue; }
+    if (n.type === 'checkbox') c[k] = n.checked ? 1 : 0;
+    else if (n.type === 'range') c[k] = parseFloat(n.value);
+    else c[k] = n.value;
+  }
+  c.invert = el('invert').checked ? 1 : 0;
+  return c;
+}
+
+var LUT_MODES = { sunset:1, ember:1, duotone:1, sepia:1 };
+
+function syncOutputs(){
+  for (var i=0;i<RANGES.length;i++){
+    var r = RANGES[i], n = el(r[0]);
+    if (n) el(r[1]).textContent = r[2](parseFloat(n.value));
+  }
+  var m = el('mode').value;
+  el('modeHint').textContent = MODE_HINT[m] || '';
+  document.querySelectorAll('.m-natural').forEach(function(e){ e.hidden = (m !== 'natural'); });
+  document.querySelectorAll('.m-adaptive').forEach(function(e){ e.hidden = (m !== 'adaptive'); });
+  el('lbSat').textContent = LUT_MODES[m] ? '\u6E10\u53D8\u7740\u58A8' : '\u8272\u5F69\u5F3A\u5EA6';
+  el('custWrap').hidden = (el('panel').value !== 'custom');
+}
+
+function selPanel(){
+  var sel = el('panel');
+  sel.innerHTML = '';
+  for (var i=0;i<PANELS.length;i++){
+    var o = document.createElement('option');
+    o.value = PANELS[i][0] === -1 ? 'custom' : (PANELS[i][0]+'x'+PANELS[i][1]);
+    o.textContent = PANELS[i][2];
+    sel.appendChild(o);
+  }
+  sel.selectedIndex = 0;
+}
+
+function toast(msg, spin){
+  var t = el('toast');
+  t.innerHTML = (spin ? '<span class="spin"></span>' : '') + msg;
+  t.classList.add('on');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function(){ t.classList.remove('on'); }, 2200);
+}
+
+/* ==================================================================
+   5. 导入
+   ================================================================== */
+function setSource(cv, isDemo){
+  state.orig = cv;
+  state.rot = 0;
+  state.crop = {x:0,y:0,w:1,h:1};
+  state.demo = !!isDemo;
+  state.img = buildEdited();
+  el('srcTag').textContent = (isDemo ? '\u793A\u4F8B\u7167\u7247 ' : '\u5DF2\u5BFC\u5165 ') + state.img.width + '\u00D7' + state.img.height;
+  el('cropInfo').textContent = '原始 ' + cv.width + '\u00D7' + cv.height + '，当前构图 ' + state.img.width + '\u00D7' + state.img.height;
+  renderThumb();
+}
+
+function fitToCanvas(img, maxSide){
+  var s = Math.min(1, maxSide/Math.max(img.width, img.height));
+  var c = canvasOf(Math.max(1,Math.round(img.width*s)), Math.max(1,Math.round(img.height*s)));
+  ctxOf(c).drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+
+function loadImageEl(img){
+  setSource(fitToCanvas(img, 1600), false);
+  if (el('autoOnLoad').checked) autoTune(true); else render();
+}
+
+function loadFromBlob(blob){
+  if (!blob) return;
+  toast('正在读取照片…', true);
+  var url = URL.createObjectURL(blob);
+  var img = new Image();
+  img.onload = function(){ URL.revokeObjectURL(url); loadImageEl(img); };
+  img.onerror = function(){ URL.revokeObjectURL(url); toast('这张图片读不出来，换一张试试'); };
+  img.src = url;
+}
+
+function drawDemo(){
+  var w = 1100, h = 760, c = canvasOf(w,h), g = ctxOf(c);
+  var sky = g.createLinearGradient(0,0,0,h*0.58);
+  sky.addColorStop(0,   '#1d3d63');
+  sky.addColorStop(0.45,'#3f6d92');
+  sky.addColorStop(0.8, '#8fa8b4');
+  sky.addColorStop(1,   '#d9b98f');
+  g.fillStyle = sky; g.fillRect(0,0,w,h*0.58);
+  var sun = g.createRadialGradient(w*0.72,h*0.5,4, w*0.72,h*0.5, h*0.42);
+  sun.addColorStop(0,'rgba(255,232,176,.95)');
+  sun.addColorStop(0.28,'rgba(255,190,110,.5)');
+  sun.addColorStop(1,'rgba(255,170,90,0)');
+  g.fillStyle = sun; g.fillRect(0,0,w,h);
+  g.fillStyle = 'rgba(255,240,200,.9)';
+  g.beginPath(); g.arc(w*0.72,h*0.5,14,0,6.3); g.fill();
+  g.fillStyle = '#e8b76a';
+  g.beginPath(); g.moveTo(0,h*0.58); g.lineTo(w*0.32,h*0.4); g.lineTo(w*0.58,h*0.58); g.closePath(); g.fill();
+  g.fillStyle = '#2f4a55';
+  g.beginPath(); g.moveTo(w*0.55,h*0.58); g.lineTo(w*0.82,h*0.33); g.lineTo(w,h*0.58); g.closePath(); g.fill();
+  g.fillStyle = '#c8b394'; g.fillRect(0,h*0.58,w,2);
+  var sea = g.createLinearGradient(0,h*0.58,0,h);
+  sea.addColorStop(0,'#7e93a0'); sea.addColorStop(0.5,'#4a6878'); sea.addColorStop(1,'#2b4552');
+  g.fillStyle = sea; g.fillRect(0,h*0.58,w,h*0.42);
+  for (var i=0;i<70;i++){
+    var y = h*0.6 + Math.random()*h*0.38, t = (y-h*0.58)/(h*0.42);
+    g.fillStyle = 'rgba(255,'+Math.round(210-70*t)+','+Math.round(150-60*t)+','+(0.5*(1-t*0.7)).toFixed(2)+')';
+    g.fillRect(w*0.60 + Math.random()*w*0.22, y, 20+Math.random()*150, 1.6);
+  }
+  g.fillStyle = '#e9c48d'; g.beginPath(); g.ellipse(w*0.16,h*0.5,64,64,0,0,6.3); g.fill();
+  g.fillStyle = '#b9743f'; g.beginPath(); g.ellipse(w*0.16,h*0.5,46,46,0,0,6.3); g.fill();
+  g.fillStyle = '#8d4f27'; g.beginPath(); g.ellipse(w*0.16,h*0.5,26,26,0,0,6.3); g.fill();
+  var fl = g.createLinearGradient(0,h*0.82,0,h);
+  fl.addColorStop(0,'#d8c39c'); fl.addColorStop(1,'#9d8258');
+  g.fillStyle = fl; g.fillRect(0,h*0.82,w,h*0.18);
+  for (var j=0;j<620;j++){
+    var x = Math.random()*w, yy = h*0.58 + Math.random()*h*0.42, a = 0.05 + Math.random()*0.11;
+    g.fillStyle = 'rgba('+(Math.random()<0.2?255:190)+','+Math.floor(90+Math.random()*90)+','+Math.floor(40+Math.random()*70)+','+a+')';
+    g.fillRect(x, yy, 2+Math.random()*6, 2+Math.random()*6);
+  }
+  var vig = g.createRadialGradient(w/2,h/2,Math.min(w,h)*0.3, w/2,h/2,Math.max(w,h)*0.72);
+  vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(10,14,24,.28)');
+  g.fillStyle = vig; g.fillRect(0,0,w,h);
+  return c;
+}
+
+/* ==================================================================
+   6. 智能优化
+   ================================================================== */
+/* 快速统计：平均亮度，以及「画面里有多少是有色彩的冷色」。
+   冷色占比用来决定冷色偏移要不要给大一点。 */
+function analyzeFlat(buf, w, h){
+  var n = w*h, step = Math.max(1, Math.floor(n/60000));
+  var lSum=0, cnt=0, coolW=0, totW=0;
+  for (var i=0;i<n;i+=step){
+    var hsl = rgb2hsl(buf[i*3]/255, buf[i*3+1]/255, buf[i*3+2]/255);
+    var hd = hsl[0]*360, wg = hsl[1];
+    lSum += hsl[2]; cnt++; totW += wg;
+    if (hd > 110 && hd < 300) coolW += wg;
+  }
+  if (!cnt) return { meanLuma:0.5, coolShare:0 };
+  return { meanLuma: lSum/cnt, coolShare: totW > 1e-6 ? coolW/totW : 0 };
+}
+
+function autoTune(silent){
+  if (!state.img){ if (!silent) toast('请先导入一张照片'); return; }
+  var small = renderSource();
+  if (!small) return;
+  var a = analyzeFlat(small.srcBuf, small.w, small.h);
+  var mode = el('mode').value;
+
+  el('brightness').value = a.meanLuma < 0.34 ? clamp(Math.round((0.36-a.meanLuma)*230), 0, 34) : 0;
+  el('contrast').value   = 0;
+  el('sharpen').value    = DEFAULTS.sharpen;
+  el('autoLevels').value = DEFAULTS.autoLevels;
+
+  var msg;
+  if (mode === 'natural'){
+    /* 先量一下「不加强」时能出多少红黄，再决定推多用力：本来就有色彩的
+       照片几乎不用推，寡淡的要推得多一些，而偏冷的照片推了也没用——
+       暖色增益在冷色相上根本使不上劲，所以它自然就保持原样。 */
+    var probe = readCfg();
+    probe.mode = 'naive';
+    var base = statsFromIndex(
+      ditherFlat(warmMapFlat(small.srcBuf, small.w, small.h, probe),
+                 small.w, small.h, probe.dither, probe.ditherStrength)).chroma;
+    var vb = base > 0.14 ? 0.35 : (base > 0.05 ? 0.55 : 0.75);
+    el('warmBoost').value = vb;
+    el('coolPull').value  = a.coolShare > 0.45 ? 0.30 : 0.20;
+    msg = '现有红黄 ' + (base*100).toFixed(1) + '% → 暖色鲜艳度 ' + vb.toFixed(2);
+  } else if (mode === 'adaptive'){
+    el('warmCast').value   = a.coolShare > 0.5 ? 0.50 : 0.34;
+    el('warmSpan').value   = 58;
+    el('saturation').value = 1.30;
+    msg = '已按冷暖比例设置暖色基调';
+  } else {
+    el('saturation').value = 1.0;
+    msg = '已重置亮度与色阶';
+  }
+  syncOutputs();
+  render();
+  if (!silent) toast(msg);
+}
+
+/* ==================================================================
+   7. 导出
+   ================================================================== */
+function fullResOutput(){
+  if (!state.img) return null;
+  var ps = targetPanelSize(), w = ps[0], h = ps[1];
+  var srcBuf = canvasToBuf(state.img, w, h);
+  var cfg = readCfg();
+  var mapped = warmMapFlat(srcBuf, w, h, cfg);
+  var idx = ditherFlat(mapped, w, h, cfg.dither, cfg.ditherStrength);
+  return { w:w, h:h, srcBuf:srcBuf, mapped:mapped, idx:idx, cfg:cfg, stats:statsFromIndex(idx) };
+}
+
+function saveBlob(blob, name){
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+  el('outInfo').innerHTML = '已导出 <b>' + name + '</b>（' + fmtKB(blob.size) + '）';
+  toast('已导出 ' + name);
+}
+
+function canvasPng(cv, name){
+  cv.toBlob(function(blob){ saveBlob(blob, name); }, 'image/png');
+}
+
+function baseName(){ return 'eink-' + Date.now(); }
+
+function doPng(){
+  var o = fullResOutput(); if (!o) return toast('请先导入照片');
+  var c = canvasOf(o.w,o.h);
+  ctxOf(c).putImageData(bufToImageData(o.idx, o.w, o.h, false), 0, 0);
+  canvasPng(c, baseName() + '-4color.png');
+}
+
+function doFlat(){
+  var o = fullResOutput(); if (!o) return toast('请先导入照片');
+  var c = canvasOf(o.w,o.h);
+  ctxOf(c).putImageData(bufToImageData(o.mapped, o.w, o.h, true), 0, 0);
+  canvasPng(c, baseName() + '-continuous.png');
+}
+
+function doDitherOnly(){
+  var o = fullResOutput(); if (!o) return toast('请先导入照片');
+  var cfg = {}, k;
+  for (k in o.cfg) cfg[k] = o.cfg[k];
+  cfg.mode = 'naive';
+  var plain = warmMapFlat(o.srcBuf, o.w, o.h, cfg);
+  var idx = ditherFlat(plain, o.w, o.h, cfg.dither, cfg.ditherStrength);
+  var c = canvasOf(o.w,o.h);
+  ctxOf(c).putImageData(bufToImageData(idx, o.w, o.h, false), 0, 0);
+  canvasPng(c, baseName() + '-dither-only.png');
+}
+
+/* 四色索引 PNG：调色板写进 PLTE，颜色永不被重算 */
+var _crcTable = null;
+function crc32(bytes){
+  if (!_crcTable){
+    _crcTable = new Uint32Array(256);
+    for (var n=0;n<256;n++){
+      var c = n;
+      for (var k=0;k<8;k++) c = (c & 1) ? (0xEDB88320 ^ (c>>>1)) : (c>>>1);
+      _crcTable[n] = c >>> 0;
+    }
+  }
+  var crc = 0xFFFFFFFF;
+  for (var i=0;i<bytes.length;i++) crc = _crcTable[(crc ^ bytes[i]) & 0xFF] ^ (crc>>>8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function pngChunk(type, data){
+  var len = data.length, out = new Uint8Array(12 + len), dv = new DataView(out.buffer);
+  dv.setUint32(0, len);
+  for (var i=0;i<4;i++) out[4+i] = type.charCodeAt(i);
+  out.set(data, 8);
+  dv.setUint32(8+len, crc32(out.subarray(4, 8+len)));
+  return out;
+}
+function zlibStore(data){
+  var n = data.length, blocks = Math.ceil(n/65535) || 1;
+  var out = new Uint8Array(2 + blocks*5 + n + 4), o = 0;
+  out[o++] = 0x78; out[o++] = 0x01;
+  var pos = 0;
+  for (var b=0;b<blocks;b++){
+    var len = Math.min(65535, n-pos);
+    out[o++] = (b === blocks-1) ? 1 : 0;
+    out[o++] = len & 0xFF; out[o++] = (len>>8) & 0xFF;
+    out[o++] = (~len) & 0xFF; out[o++] = ((~len)>>8) & 0xFF;
+    out.set(data.subarray(pos, pos+len), o);
+    o += len; pos += len;
+  }
+  var a = 1, bb = 0;
+  for (var i=0;i<n;i++){ a = (a + data[i]) % 65521; bb = (bb + a) % 65521; }
+  out[o++] = (bb>>8)&0xFF; out[o++] = bb&0xFF;
+  out[o++] = (a>>8)&0xFF;  out[o++] = a&0xFF;
+  return out.subarray(0, o);
+}
+
+/* A 2bpp image is mostly flat runs, so the browser's own zlib beats the
+   stored-block fallback by a wide margin.  'deflate' is the zlib-wrapped
+   flavour, which is exactly what an IDAT chunk wants. */
+async function zlibDeflate(data){
+  if (typeof CompressionStream === 'function'){
+    try {
+      var cs = new CompressionStream('deflate');
+      var w = cs.writable.getWriter();
+      var wr = w.write(data).then(function(){ return w.close(); });
+      var buf = await new Response(cs.readable).arrayBuffer();
+      await wr;
+      if (buf.byteLength > 0) return new Uint8Array(buf);
+    } catch(_){ /* fall through to the stored-block encoder */ }
+  }
+  return zlibStore(data);
+}
+
+async function encodeIndexedPng(idx, w, h, remap){
+  var parts = [new Uint8Array([137,80,78,71,13,10,26,10])];
+  var ihdr = new Uint8Array(13), dv = new DataView(ihdr.buffer);
+  dv.setUint32(0,w); dv.setUint32(4,h);
+  ihdr[8] = 2; ihdr[9] = 3; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  parts.push(pngChunk('IHDR', ihdr));
+  var plte = new Uint8Array(12);
+  for (var p=0;p<4;p++){ plte[p*3]=PALETTE[p][0]; plte[p*3+1]=PALETTE[p][1]; plte[p*3+2]=PALETTE[p][2]; }
+  parts.push(pngChunk('PLTE', plte));
+  var stride = Math.ceil(w/4), raw = new Uint8Array(h*(stride+1));
+  for (var y=0;y<h;y++){
+    var o = y*(stride+1);
+    raw[o] = 0;
+    for (var x=0;x<w;x+=4){
+      var v = remap[idx[y*w+x]] << 6;
+      if (x+1<w) v |= remap[idx[y*w+x+1]] << 4;
+      if (x+2<w) v |= remap[idx[y*w+x+2]] << 2;
+      if (x+3<w) v |= remap[idx[y*w+x+3]];
+      raw[o+1+(x>>2)] = v;
+    }
+  }
+  parts.push(pngChunk('IDAT', await zlibDeflate(raw)));
+  parts.push(pngChunk('IEND', new Uint8Array(0)));
+  var total = 0, i2;
+  for (i2=0;i2<parts.length;i2++) total += parts[i2].length;
+  var out = new Uint8Array(total), off = 0;
+  for (i2=0;i2<parts.length;i2++){ out.set(parts[i2], off); off += parts[i2].length; }
+  return out;
+}
+
+function rawOrderMap(){
+  return el('rawOrder').value === 'kwry'
+    ? {0:0, 1:1, 2:2, 3:3}
+    : {0:0, 1:1, 2:3, 3:2};
+}
+
+async function doIdx(){
+  var o = fullResOutput(); if (!o) return toast('请先导入照片');
+  var bytes = await encodeIndexedPng(o.idx, o.w, o.h, rawOrderMap());
+  saveBlob(new Blob([bytes], {type:'image/png'}), baseName() + '-indexed.png');
+}
+
+function doBmp(){
+  var o = fullResOutput(); if (!o) return toast('请先导入照片');
+  var w = o.w, h = o.h, rowSize = (w*3 + 3) & ~3, dataSize = rowSize*h, fileSize = 54 + dataSize;
+  var buf = new ArrayBuffer(fileSize), dv = new DataView(buf), u8 = new Uint8Array(buf);
+  dv.setUint16(0, 0x4D42, true); dv.setUint32(2, fileSize, true); dv.setUint32(10, 54, true);
+  dv.setUint32(14, 40, true); dv.setInt32(18, w, true); dv.setInt32(22, h, true);
+  dv.setUint16(26, 1, true); dv.setUint16(28, 24, true); dv.setUint32(34, dataSize, true);
+  for (var y=0;y<h;y++){
+    var src = (h-1-y)*w;
+    for (var x=0;x<w;x++){
+      var p = PALETTE[o.idx[src+x]], o2 = 54 + y*rowSize + x*3;
+      u8[o2] = p[2]; u8[o2+1] = p[1]; u8[o2+2] = p[0];
+    }
+  }
+  saveBlob(new Blob([buf], {type:'image/bmp'}), baseName() + '.bmp');
+}
+
+function doRaw(){
+  var o = fullResOutput(); if (!o) return toast('请先导入照片');
+  var map = rawOrderMap();
+  var w = o.w, h = o.h, stride = Math.ceil(w/4), total = stride*h;
+  var out = new Uint8Array(total);
+  for (var y=0;y<h;y++){
+    for (var x=0;x<w;x+=4){
+      var v = map[o.idx[y*w+x]] << 6;
+      if (x+1<w) v |= map[o.idx[y*w+x+1]] << 4;
+      if (x+2<w) v |= map[o.idx[y*w+x+2]] << 2;
+      if (x+3<w) v |= map[o.idx[y*w+x+3]];
+      out[y*stride + (x>>2)] = v;
+    }
+  }
+  saveBlob(new Blob([out], {type:'application/octet-stream'}), baseName() + '-' + w + 'x' + h + '.raw');
+}
+
+function doCopy(){
+  var o = fullResOutput(); if (!o) return toast('请先导入照片');
+  var c = canvasOf(o.w,o.h);
+  ctxOf(c).putImageData(bufToImageData(o.idx, o.w, o.h, false), 0, 0);
+  c.toBlob(function(blob){
+    if (!navigator.clipboard || !window.ClipboardItem){
+      el('outInfo').textContent = '当前浏览器不支持复制图片，请用「PNG」按钮导出。';
+      return;
+    }
+    navigator.clipboard.write([new ClipboardItem({'image/png': blob})])
+      .then(function(){ el('outInfo').textContent = '已复制到剪贴板，可直接粘贴。'; toast('已复制'); })
+      .catch(function(){ el('outInfo').textContent = '复制失败，请改用「PNG」按钮导出。'; });
+  }, 'image/png');
+}
+
+/* ==================================================================
+   8. 裁剪 / 旋转
+   ================================================================== */
+var crop = { rot:0, rect:{x:0,y:0,w:1,h:1}, aspect:0, base:null, rw:0, rh:0,
+             dw:1, dh:1, drag:null, on:false };
+
+function aspectValue(){
+  if (crop.aspect === -1){ var ps = targetPanelSize(); return ps[0]/ps[1]; }
+  return crop.aspect;
+}
+
+function buildCropBase(){
+  var img = state.orig, sw = img.width, sh = img.height, rot = mod(crop.rot,360);
+  var rw = (rot % 180) ? sh : sw, rh = (rot % 180) ? sw : sh;
+  var t = canvasOf(rw, rh), tc = ctxOf(t);
+  tc.save();
+  tc.translate(Math.round(rw/2), Math.round(rh/2));
+  tc.rotate(rot*Math.PI/180);
+  tc.drawImage(img, -Math.round(sw/2), -Math.round(sh/2));
+  tc.restore();
+  crop.base = t; crop.rw = rw; crop.rh = rh;
+}
+
+function cropClamp(){
+  var r = crop.rect;
+  r.w = clamp(r.w, 0.04, 1); r.h = clamp(r.h, 0.04, 1);
+  r.x = clamp(r.x, 0, 1-r.w); r.y = clamp(r.y, 0, 1-r.h);
+}
+
+function cropRender(){
+  var cv = el('cmCanvas'), stage = cv.parentNode;
+  var maxW = Math.min((stage.clientWidth || 900) - 4, 940);
+  var maxH = Math.min(window.innerHeight*0.60, 620);
+  var s = Math.min(maxW/crop.rw, maxH/crop.rh, 1);
+  var DW = Math.max(1, Math.round(crop.rw*s)), DH = Math.max(1, Math.round(crop.rh*s));
+  crop.dw = DW; crop.dh = DH;
+  cv.width = DW; cv.height = DH; cv.style.width = DW+'px'; cv.style.height = DH+'px';
+  var g = ctxOf(cv);
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  g.clearRect(0,0,DW,DH);
+  g.drawImage(crop.base, 0, 0, DW, DH);
+
+  var r = crop.rect, x = r.x*DW, y = r.y*DH, w = r.w*DW, h = r.h*DH;
+  g.save();
+  g.fillStyle = 'rgba(24,18,12,.58)';
+  g.beginPath();
+  g.rect(0,0,DW,DH);
+  g.rect(x,y,w,h);
+  g.fill('evenodd');
+  g.restore();
+
+  g.strokeStyle = 'rgba(255,214,130,.85)'; g.lineWidth = 1;
+  g.beginPath();
+  for (var i=1;i<3;i++){
+    g.moveTo(x+w*i/3, y); g.lineTo(x+w*i/3, y+h);
+    g.moveTo(x, y+h*i/3); g.lineTo(x+w, y+h*i/3);
+  }
+  g.stroke();
+
+  g.strokeStyle = '#ffd479'; g.lineWidth = 2;
+  g.strokeRect(x+1, y+1, Math.max(0,w-2), Math.max(0,h-2));
+  g.fillStyle = '#ffd479';
+  var hs = 11;
+  var pts = [[x,y],[x+w,y],[x,y+h],[x+w,y+h]];
+  for (var j=0;j<4;j++) g.fillRect(pts[j][0]-hs/2, pts[j][1]-hs/2, hs, hs);
+}
+
+function cropPos(e){
+  var cv = el('cmCanvas'), b = cv.getBoundingClientRect();
+  return { x:(e.clientX-b.left)*cv.width/b.width, y:(e.clientY-b.top)*cv.height/b.height };
+}
+
+function cropHit(p){
+  var r = crop.rect, x = r.x*crop.dw, y = r.y*crop.dh, w = r.w*crop.dw, h = r.h*crop.dh;
+  var T = Math.max(16, Math.min(crop.dw, crop.dh)*0.06);
+  var cs = [[x,y,'nw'],[x+w,y,'ne'],[x,y+h,'sw'],[x+w,y+h,'se']];
+  for (var i=0;i<4;i++)
+    if (Math.abs(p.x-cs[i][0]) <= T && Math.abs(p.y-cs[i][1]) <= T) return cs[i][2];
+  if (p.x > x && p.x < x+w && p.y > y && p.y < y+h) return 'move';
+  return 'new';
+}
+
+function cropDown(e){
+  e.preventDefault();
+  var p = cropPos(e), hit = cropHit(p), r = crop.rect;
+  if (hit === 'new'){
+    var nx = clamp(p.x/crop.dw, 0, 1), ny = clamp(p.y/crop.dh, 0, 1);
+    crop.rect = { x:nx, y:ny, w:0.04, h:0.04 };
+    crop.drag = { hit:'se', sx:p.x, sy:p.y, r:{x:nx,y:ny,w:0.04,h:0.04} };
+  } else {
+    crop.drag = { hit:hit, sx:p.x, sy:p.y, r:{x:r.x,y:r.y,w:r.w,h:r.h} };
+  }
+  try { el('cmCanvas').setPointerCapture(e.pointerId); } catch(_){}
+  cropRender();
+}
+
+function cropMove(e){
+  if (!crop.drag) return;
+  e.preventDefault();
+  var p = cropPos(e), d = crop.drag, o = d.r;
+  var dx = (p.x-d.sx)/crop.dw, dy = (p.y-d.sy)/crop.dh;
+  var ar = aspectValue(), r;
+
+  if (d.hit === 'move'){
+    r = { x:clamp(o.x+dx, 0, 1-o.w), y:clamp(o.y+dy, 0, 1-o.h), w:o.w, h:o.h };
+  } else {
+    var left = o.x, top = o.y, right = o.x+o.w, bot = o.y+o.h;
+    if (d.hit === 'nw' || d.hit === 'sw') left  = clamp(o.x+dx, 0, right-0.04);
+    if (d.hit === 'ne' || d.hit === 'se') right = clamp(o.x+o.w+dx, left+0.04, 1);
+    if (d.hit === 'nw' || d.hit === 'ne') top   = clamp(o.y+dy, 0, bot-0.04);
+    if (d.hit === 'sw' || d.hit === 'se') bot   = clamp(o.y+o.h+dy, top+0.04, 1);
+    var w = right-left, h = bot-top;
+    if (ar > 0){
+      h = w/ar;
+      if (d.hit === 'nw' || d.hit === 'ne'){
+        top = bot - h;
+        if (top < 0){ top = 0; h = bot; w = h*ar; if (d.hit === 'nw') left = right-w; }
+      } else {
+        bot = top + h;
+        if (bot > 1){ bot = 1; h = bot-top; w = h*ar; if (d.hit === 'sw') left = right-w; }
+      }
+      if (left < 0){ left = 0; right = w; }
+      if (right > 1){ right = 1; left = 1-w; }
+    }
+    r = { x:left, y:top, w:right-left, h:bot-top };
+  }
+  crop.rect = r;
+  cropClamp();
+  cropRender();
+}
+
+function cropUp(){ crop.drag = null; }
+
+function openCrop(){
+  if (!state.orig) return toast('请先导入照片');
+  crop.rot = mod(state.rot, 360);
+  crop.rect = { x:state.crop.x, y:state.crop.y, w:state.crop.w, h:state.crop.h };
+  crop.aspect = 0;
+  el('cmAspect').value = '0';
+  buildCropBase();
+  el('cropModal').classList.add('on');
+  crop.on = true;
+  setTimeout(cropRender, 30);
+}
+
+function closeCrop(){
+  el('cropModal').classList.remove('on');
+  crop.on = false;
+  crop.drag = null;
+}
+
+/* ==================================================================
+   9. 事件
+   ================================================================== */
+function bind(){
+  el('drop').addEventListener('click', function(){ el('file').click(); });
+  el('file').addEventListener('change', function(e){
+    var f = e.target.files && e.target.files[0];
+    if (f) loadFromBlob(f);
+    e.target.value = '';
+  });
+  ['dragenter','dragover'].forEach(function(t){
+    el('drop').addEventListener(t, function(e){ e.preventDefault(); el('drop').classList.add('over'); });
+  });
+  ['dragleave','drop'].forEach(function(t){
+    el('drop').addEventListener(t, function(e){ e.preventDefault(); el('drop').classList.remove('over'); });
+  });
+  el('drop').addEventListener('drop', function(e){
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadFromBlob(f);
+  });
+  window.addEventListener('paste', function(e){
+    var items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (var k=0;k<items.length;k++){
+      if (items[k].type && items[k].type.indexOf('image') === 0){
+        loadFromBlob(items[k].getAsFile());
+        break;
+      }
+    }
+  });
+
+  el('btnDemo').addEventListener('click', function(){
+    setSource(drawDemo(), true);
+    if (el('autoOnLoad').checked) autoTune(true); else render();
+  });
+  el('btnAuto').addEventListener('click', function(){ autoTune(false); });
+  el('btnReset').addEventListener('click', function(){
+    var m = el('mode').value, k;
+    for (k in DEFAULTS){
+      var n = el(k);
+      if (n && n.type === 'range') n.value = DEFAULTS[k];
+    }
+    el('invert').checked = false;
+    el('autoOnLoad').checked = true;
+    el('showFar').checked = true;
+    el('mode').value = m;
+    el('rawOrder').value = 'kwry';
+    el('dither').value = DEFAULTS.dither;
+    el('castRamp').value = DEFAULTS.castRamp;
+    el('panel').selectedIndex = 0;
+    el('fit').value = 'cover';
+    syncOutputs(); render();
+    el('outInfo').textContent = '';
+    toast('已恢复默认参数');
+  });
+
+  ['mode','panel','fit','dither','castRamp','rawOrder'].forEach(function(id){
+    el(id).addEventListener('input', function(){ syncOutputs(); render(); });
+    el(id).addEventListener('change', function(){ syncOutputs(); render(); });
+  });
+  el('showFar').addEventListener('change', render);
+  el('autoOnLoad').addEventListener('change', function(){});
+  RANGES.forEach(function(r){
+    var n = el(r[0]);
+    if (n) n.addEventListener('input', function(){ syncOutputs(); render(); });
+  });
+  el('invert').addEventListener('change', render);
+
+  el('expPng').addEventListener('click', doPng);
+  el('expIdx').addEventListener('click', doIdx);
+  el('expBmp').addEventListener('click', doBmp);
+  el('expRaw').addEventListener('click', doRaw);
+  el('btnCopy').addEventListener('click', doCopy);
+  el('expFlat').addEventListener('click', doFlat);
+  el('expDitherOnly').addEventListener('click', doDitherOnly);
+
+  el('btnZoom').addEventListener('click', function(){
+    if (!state.img) return toast('请先导入照片');
+    var o = fullResOutput();
+    var cv = el('cvZoom');
+    cv.width = o.w; cv.height = o.h;
+    ctxOf(cv).putImageData(bufToImageData(o.idx, o.w, o.h, false), 0, 0);
+    el('zoom').classList.add('on');
+  });
+  var closeZoom = function(){ el('zoom').classList.remove('on'); };
+  el('zoomClose').addEventListener('click', closeZoom);
+  el('zoom').addEventListener('click', function(e){ if (e.target === el('zoom')) closeZoom(); });
+
+  el('btnCrop').addEventListener('click', openCrop);
+  el('cmCancel').addEventListener('click', closeCrop);
+  el('cmOk').addEventListener('click', function(){
+    state.rot = mod(crop.rot, 360);
+    state.crop = { x:crop.rect.x, y:crop.rect.y, w:crop.rect.w, h:crop.rect.h };
+    state.img = buildEdited();
+    el('cropInfo').textContent = '原始 ' + state.orig.width + '\u00D7' + state.orig.height +
+      '，当前构图 ' + state.img.width + '\u00D7' + state.img.height;
+    renderThumb(); closeCrop(); render();
+    toast('构图已更新');
+  });
+  el('cmReset').addEventListener('click', function(){
+    crop.rot = 0; crop.rect = {x:0,y:0,w:1,h:1};
+    buildCropBase(); cropRender();
+  });
+  el('cmRotL').addEventListener('click', function(){
+    crop.rot = mod(crop.rot-90,360); crop.rect = {x:0,y:0,w:1,h:1}; buildCropBase(); cropRender();
+  });
+  el('cmRotR').addEventListener('click', function(){
+    crop.rot = mod(crop.rot+90,360); crop.rect = {x:0,y:0,w:1,h:1}; buildCropBase(); cropRender();
+  });
+  el('cmAspect').addEventListener('change', function(){
+    crop.aspect = parseFloat(el('cmAspect').value);
+    var ar = aspectValue();
+    if (ar > 0){
+      var r = crop.rect, cx = r.x + r.w/2, cy = r.y + r.h/2, w = r.w, h = w/ar;
+      if (h > 1){ h = 1; w = h*ar; }
+      crop.rect = { x:clamp(cx-w/2,0,1-w), y:clamp(cy-h/2,0,1-h), w:w, h:h };
+    }
+    cropRender();
+  });
+  var ccv = el('cmCanvas');
+  ccv.addEventListener('pointerdown', cropDown);
+  ccv.addEventListener('pointermove', cropMove);
+  ccv.addEventListener('pointerup', cropUp);
+  ccv.addEventListener('pointercancel', cropUp);
+  window.addEventListener('resize', function(){ if (crop.on) cropRender(); else if (state.img) render(); });
+}
+
+/* ==================================================================
+   10. 启动
+   ================================================================== */
+selPanel();
+bind();
+syncOutputs();
+render();
+
+window.__eink = {
+  version:VERSION, DEFAULTS:DEFAULTS, PALETTE:PALETTE, PANELS:PANELS,
+  warmMapFlat:warmMapFlat, ditherFlat:ditherFlat, statsFromIndex:statsFromIndex,
+  warmAffinity:warmAffinity, rgb2hsl:rgb2hsl, hsl2rgb:hsl2rgb,
+  analyzeFlat:analyzeFlat, autoTune:autoTune, buildEdited:buildEdited,
+  encodeIndexedPng:encodeIndexedPng, state:state, crop:crop,
+  loadFromBlob:loadFromBlob, setSource:setSource, drawDemo:drawDemo,
+  readCfg:readCfg, render:render, fullResOutput:fullResOutput, selPanel:selPanel,
+  openCrop:openCrop, closeCrop:closeCrop, fmtKB:fmtKB,
+  getStats:function(){ return lastStats; }
+};
+
+})();
+</script>
+</body>
+</html>

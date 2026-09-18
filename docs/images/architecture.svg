@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 420" font-family="-apple-system,'Segoe UI','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#57606a"/></marker>
+  </defs>
+  <style>
+    .box{fill:#ffffff;stroke:#d0d7de;stroke-width:1.5;rx:8}
+    .t{font-size:14px;fill:#1f2328;font-weight:600}
+    .s{font-size:11.5px;fill:#57606a}
+    .arr{stroke:#57606a;stroke-width:1.5;fill:none;marker-end:url(#arr)}
+  </style>
+  <rect width="860" height="420" fill="#f6f8fa"/>
+  <text x="430" y="34" text-anchor="middle" font-size="17" font-weight="700" fill="#1f2328">墨印 · MoInk 系统架构</text>
+
+  <!-- 手机/浏览器 -->
+  <rect x="40" y="70" width="220" height="150" rx="8" class="box"/>
+  <text x="150" y="96" text-anchor="middle" class="t">📱 手机 / 电脑浏览器</text>
+  <text x="150" y="120" text-anchor="middle" class="s">创作页面（单文件 HTML）</text>
+  <text x="60" y="146" class="s">• 选图 / Cropper.js 裁剪</text>
+  <text x="60" y="166" class="s">• eink-warm 四色量化 + 抖动</text>
+  <text x="60" y="186" class="s">• 拍立得留白 / 文字排版</text>
+  <text x="60" y="206" class="s">• 合成 105,984B 四色帧</text>
+
+  <!-- ESP32 -->
+  <rect x="330" y="70" width="220" height="150" rx="8" class="box"/>
+  <text x="440" y="96" text-anchor="middle" class="t">🔌 ESP32-C3 固件</text>
+  <text x="440" y="120" text-anchor="middle" class="s">SoftAP + HTTP 服务</text>
+  <text x="350" y="146" class="s">• 帧头校验（CRC16-CCITT）</text>
+  <text x="350" y="166" class="s">• OTA / 页面热更（CRC32 自愈）</text>
+  <text x="350" y="186" class="s">• NVS 设置 / 电池 ADC</text>
+  <text x="350" y="206" class="s">• 深度睡眠 / 按键唤醒</text>
+
+  <!-- 屏幕 -->
+  <rect x="620" y="70" width="200" height="150" rx="8" class="box"/>
+  <text x="720" y="96" text-anchor="middle" class="t">🪟 四色墨水屏</text>
+  <text x="720" y="120" text-anchor="middle" class="s">768×552 · 黑/白/黄/红</text>
+  <text x="640" y="146" class="s">• SPI 驱动（A0 隔行映射）</text>
+  <text x="640" y="166" class="s">• 整帧刷写后锁屏</text>
+  <text x="640" y="186" class="s">• 断电画面永久保持</text>
+
+  <path class="arr" d="M262,130 L328,130"/>
+  <path class="arr" d="M552,130 L618,130"/>
+  <text x="295" y="122" text-anchor="middle" class="s">HTTP POST 帧</text>
+  <text x="295" y="146" text-anchor="middle" class="s">192.168.4.1</text>
+  <text x="585" y="122" text-anchor="middle" class="s">SPI</text>
+
+  <!-- 流程条 -->
+  <rect x="40" y="260" width="780" height="120" rx="8" class="box"/>
+  <text x="430" y="286" text-anchor="middle" class="t">一次传图的完整链路</text>
+  <g font-size="12" fill="#1f2328" text-anchor="middle" font-weight="600">
+    <rect x="70"  y="305" width="100" height="46" rx="6" fill="#ddf4ff" stroke="#54aeff"/><text x="120" y="325">① 选图裁剪</text><text x="120" y="341" font-size="10" fill="#57606a" font-weight="400">EXIF 自动摆正</text>
+    <rect x="200" y="305" width="100" height="46" rx="6" fill="#ddf4ff" stroke="#54aeff"/><text x="250" y="325">② 风格文字</text><text x="250" y="341" font-size="10" fill="#57606a" font-weight="400">四色直出</text>
+    <rect x="330" y="305" width="100" height="46" rx="6" fill="#ddf4ff" stroke="#54aeff"/><text x="380" y="325">③ 浏览器合成</text><text x="380" y="341" font-size="10" fill="#57606a" font-weight="400">量化 + 抖动</text>
+    <rect x="460" y="305" width="100" height="46" rx="6" fill="#fff8c5" stroke="#d4a72c"/><text x="510" y="325">④ 上传帧</text><text x="510" y="341" font-size="10" fill="#57606a" font-weight="400">CRC16 校验</text>
+    <rect x="590" y="305" width="100" height="46" rx="6" fill="#fff8c5" stroke="#d4a72c"/><text x="640" y="325">⑤ 刷屏锁存</text><text x="640" y="341" font-size="10" fill="#57606a" font-weight="400">整帧无局部刷新</text>
+    <rect x="720" y="305" width="76" height="46" rx="6" fill="#dafbe1" stroke="#4ac26b"/><text x="758" y="325">⑥ 深睡</text><text x="758" y="341" font-size="10" fill="#57606a" font-weight="400">按键唤醒</text>
+  </g>
+  <path class="arr" d="M172,328 L198,328"/>
+  <path class="arr" d="M302,328 L328,328"/>
+  <path class="arr" d="M432,328 L458,328"/>
+  <path class="arr" d="M562,328 L588,328"/>
+  <path class="arr" d="M692,328 L718,328"/>
+</svg>

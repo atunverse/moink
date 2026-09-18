@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="moink-page-version" content="R1.0.10">
+<title>墨印 · MoInk</title>
+<style>
+:root{ --bg:#faf7f2; --card:#fff; --line:#eee6da; --ink:#2b2620; --mut:#9a8f7d;
+       --acc:#e07a3f; --acc2:#3f7d6b; --ok:#2e7d4f; --err:#c0392b; }
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{ background:var(--bg); color:var(--ink);
+      font-family:-apple-system,'PingFang SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif;
+      font-size:15px; line-height:1.55; -webkit-text-size-adjust:100%; }
+header{ padding:18px 18px 10px; }
+header h1{ margin:0; font-size:22px; font-weight:700; letter-spacing:.5px; }
+header .sub{ margin-top:4px; font-size:12.5px; color:var(--mut); }
+header .sub b{ color:var(--ink); font-weight:600; }
+#conn{ display:inline-block; margin-top:8px; padding:2px 10px; border-radius:99px;
+       font-size:12px; background:#eee6da; color:#8a7a5c; }
+#conn.ok{ background:#e3f2e8; color:var(--ok); }
+main{ max-width:640px; margin:0 auto; padding:6px 14px 40px; }
+.card{ background:var(--card); border:1px solid var(--line); border-radius:16px;
+       padding:16px; margin:12px 0; }
+.card h2{ margin:0 0 12px; font-size:16px; font-weight:700; }
+.card h2 .tag{ font-size:11px; color:var(--mut); font-weight:400; margin-left:6px; }
+.row{ display:flex; align-items:center; gap:10px; margin:8px 0; flex-wrap:wrap; }
+.row label{ font-size:13px; color:var(--mut); min-width:56px; }
+.hint{ font-size:12px; color:var(--mut); margin:6px 0; }
+button{ font-family:inherit; cursor:pointer; border:none; border-radius:10px;
+        background:var(--acc); color:#fff; font-size:14px; padding:9px 16px; }
+button.mini{ background:#f1ece1; color:var(--ink); padding:7px 12px; font-size:13px; }
+button.sec{ background:var(--acc2); }
+button.danger{ background:var(--err); }
+button:disabled{ opacity:.45; cursor:default; }
+button.mode{ background:#f1ece1; color:var(--ink); }
+button.mode.on{ background:var(--acc); color:#fff; }
+button.preset{ background:#f1ece1; color:var(--ink); padding:7px 12px; font-size:13px; }
+button.preset.on{ background:var(--acc2); color:#fff; }
+input[type=text],input[type=password],input[type=number],select,textarea{
+  font-family:inherit; font-size:14px; border:1px solid var(--line); border-radius:10px;
+  padding:8px 10px; background:#fff; color:var(--ink); }
+textarea{ width:100%; min-height:84px; resize:vertical; }
+input[type=range]{ flex:1; min-width:120px; }
+input[type=file]{ font-size:13px; }
+#drop{ border:2px dashed var(--line); border-radius:14px; padding:26px 16px; text-align:center;
+       color:var(--mut); cursor:pointer; }
+#drop.has{ border-style:solid; border-color:#d9cfbf; }
+#filerow{ display:flex; align-items:center; gap:10px; margin-top:10px; }
+#thumb{ width:56px; height:40px; object-fit:cover; border-radius:8px; border:1px solid var(--line); }
+#fname{ font-size:12px; color:var(--mut); flex:1; word-break:break-all; }
+#stage{ position:relative; margin:10px 0; overflow:hidden; border-radius:12px;
+        background:#eee6da; touch-action:none; }
+#src{ display:block; width:100%; }
+#crop{ position:absolute; border:2px solid var(--acc); box-shadow:0 0 0 9999px rgba(0,0,0,.35);
+       cursor:move; }
+#crop::after{ content:""; position:absolute; right:-7px; bottom:-7px; width:14px; height:14px;
+              background:var(--acc); border-radius:3px; cursor:se-resize; }
+#prev{ display:block; width:100%; max-width:420px; margin:10px auto; border:1px solid var(--line);
+       border-radius:10px; background:#fff; }
+#stathint{ font-size:12px; color:var(--mut); text-align:center; margin:4px 0; }
+#msg{ margin:10px 0 0; font-size:13.5px; min-height:20px; }
+#msg.ok{ color:var(--ok); } #msg.err{ color:var(--err); }
+#bar,#bar2{ display:none; height:8px; background:#eee6da; border-radius:99px; overflow:hidden; margin:10px 0; }
+#fill,#fill2{ height:100%; width:0; background:var(--acc); border-radius:99px; transition:width .15s; }
+.stat{ display:flex; justify-content:space-between; font-size:13.5px; padding:5px 0;
+       border-bottom:1px dashed var(--line); }
+.stat:last-child{ border-bottom:none; }
+.stat b{ font-weight:600; }
+.stat .k{ color:var(--mut); }
+details{ margin:10px 0; }
+details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--ink); }
+.slider{ display:flex; align-items:center; gap:10px; margin:6px 0; }
+.slider label{ font-size:12.5px; color:var(--mut); width:78px; flex-shrink:0; }
+.slider output{ font-size:12px; color:var(--mut); width:44px; text-align:right; }
+.dmark{ display:inline-block; margin-left:6px; font-size:11px; color:var(--acc2); }
+.dmark.off{ visibility:hidden; }
+@media (max-width:480px){ .slider label{ width:66px; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>墨印 · MoInk</h1>
+  <div class="sub">电子照片 · 电子拍立得 · 挂件</div>
+  <div class="sub">固件 <b id="i-fw">—</b> · 页面 <b id="i-page">—</b> · 接口 <b id="i-api">—</b></div>
+  <div id="conn">未连接</div>
+</header>
+
+<main>
+
+  <!-- ================= 图像 ================= -->
+  <section class="card">
+    <h2>图像<span class="tag">选图 · 裁剪 · 上传</span></h2>
+
+    <div class="row" id="modes">
+      <button class="mode on" data-m="0">整幅图像</button>
+      <button class="mode" data-m="1">文字便签</button>
+    </div>
+    <div class="hint" id="modeDesc">图片铺满整块屏幕，可在画面上叠一行文字。</div>
+
+    <div id="pickCard">
+      <div id="drop"><b>点击选择图片</b><br><span style="font-size:12px">也可以拖入，或直接粘贴</span></div>
+      <input type="file" id="file" accept="image/*" style="display:none">
+      <div id="filerow" style="display:none">
+        <img id="thumb" alt="">
+        <span id="fname"></span>
+        <button class="mini" id="refile">换图</button>
+      </div>
+
+      <div id="cropCard">
+        <div id="stage"><canvas id="src"></canvas><div id="crop"></div></div>
+        <div class="row">
+          <button class="mini" id="rotStep">旋转 90°</button>
+          <span id="rotVal" style="font-size:13px;color:var(--mut)">90°</span>
+          <span style="flex:1"></span>
+          <button class="mini" id="cropMax">铺满</button>
+          <button class="mini" id="cropCenter">居中</button>
+        </div>
+        <div class="hint">拖动框移动，右下角缩放；比例固定为屏幕 768:552。</div>
+      </div>
+    </div>
+
+    <div id="textCard">
+      <textarea id="txt" placeholder="写点文字（留空就是不叠字）…"></textarea>
+      <div class="row">
+        <label>字体</label>
+        <select id="tFont"></select>
+        <label>大小</label>
+        <input type="range" id="tSize" min="40" max="260" value="100">
+        <label>颜色</label>
+        <select id="tColor"><option value="0">黑</option><option value="1">白</option><option value="2">黄</option><option value="3">红</option></select>
+        <span id="tbgWrap"><label>底色</label>
+        <select id="tBg"><option value="0">白底</option><option value="1">黑底</option></select></span>
+      </div>
+      <div class="row" id="autoPushRow" style="display:none">
+        <label><input type="checkbox" id="autoPush"> 停止输入 3 秒自动上传</label>
+      </div>
+    </div>
+
+    <canvas id="prev" width="768" height="552"></canvas>
+    <div id="stathint"></div>
+    <button class="sec" id="go" style="width:100%" disabled>上传并刷新屏幕</button>
+    <div id="bar"><div id="fill"></div></div>
+    <p id="msg"></p>
+  </section>
+
+  <!-- ================= 风格 ================= -->
+  <section class="card">
+    <h2>风格<span class="tag">画面质感</span></h2>
+
+    <div class="row" id="presets">
+      <button class="preset on" data-m="natural">自然暖调</button>
+      <button class="preset" data-m="adaptive">全面暖色</button>
+      <button class="preset" data-m="gray">纯灰度</button>
+      <button class="preset" data-m="naive">原色直出</button>
+    </div>
+
+    <div class="slider">
+      <label id="coreLab">色彩强度</label>
+      <input type="range" id="core" min="0" max="100" value="60">
+      <output id="o-core">60%</output>
+    </div>
+    <div class="hint" id="coreHint"></div>
+
+    <details id="adv">
+      <summary>高级图像设置</summary>
+      <div class="hint" id="advnote"></div>
+      <div id="ctrls"></div>
+      <div class="row">
+        <label>抖动</label>
+        <select id="dmode">
+          <option value="fs">Floyd-Steinberg</option>
+          <option value="stucki">Stucki</option>
+          <option value="jarvis">Jarvis</option>
+          <option value="burkes">Burkes</option>
+          <option value="sierra">Sierra Lite</option>
+          <option value="atkinson">Atkinson</option>
+          <option value="bayer">Bayer 8×8</option>
+          <option value="none">无抖动</option>
+        </select>
+        <label>色域</label>
+        <select id="space"><option value="linear">线性光</option><option value="srgb">sRGB</option></select>
+        <label><input type="checkbox" id="levels" checked> 自动色阶</label>
+      </div>
+      <button class="mini" id="resetAdv">恢复默认参数</button>
+    </details>
+  </section>
+
+  <!-- ================= 设置 ================= -->
+  <section class="card">
+    <h2>设置<span class="tag">电源 · 热点 · 维护</span></h2>
+
+    <div class="stat"><span class="k">屏幕</span><b id="i-panel">—</b></div>
+    <div class="stat"><span class="k">当前热点</span><b id="i-ssid">—</b></div>
+    <div class="stat"><span class="k">空闲内存</span><b id="i-heap">—</b></div>
+    <div class="stat"><span class="k">电池</span><b id="i-bat">—</b></div>
+    <div class="stat"><span class="k">在线设备</span><b id="i-clients">—</b></div>
+
+    <div class="row">
+      <label>休眠</label>
+      <select id="sleepSel">
+        <option value="60">1 分钟</option>
+        <option value="180">3 分钟</option>
+        <option value="300">5 分钟</option>
+        <option value="0">不休眠</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>自动唤醒</label>
+      <select id="wakeSel">
+        <option value="0">关闭</option>
+        <option value="3600">每 1 小时</option>
+        <option value="43200">每 12 小时</option>
+        <option value="86400">每 1 天</option>
+      </select>
+      <span class="hint" style="margin:0">醒来开热点等人传图（3 分钟）</span>
+    </div>
+
+    <div class="row">
+      <label>热点名</label>
+      <input type="text" id="apSsid" maxlength="32" placeholder="留空 = MoInk-XXXX">
+    </div>
+    <div class="row">
+      <label>密码</label>
+      <input type="password" id="apPass" maxlength="64" placeholder="留空 = 开放">
+    </div>
+    <div class="row"><button class="mini" id="saveAp">保存热点设置</button></div>
+
+    <div class="row">
+      <label>屏幕</label>
+      <select id="panelSel"><option value="0">A0</option><option value="1">A1</option></select>
+      <label><input type="checkbox" id="hflip"> 左右镜像</label>
+      <button class="mini" id="savePanel">保存</button>
+    </div>
+
+    <details>
+      <summary>维护</summary>
+      <div class="row"><b style="font-size:13px">① 固件（.bin）</b></div>
+      <input type="file" id="fwFile" accept=".bin" style="width:100%;font-size:13px">
+      <div class="row"><button class="mini" id="fwGo">上传固件并重启</button></div>
+      <div class="row" style="margin-top:14px"><b style="font-size:13px">② 页面（index.html）</b></div>
+      <input type="file" id="webFile" accept=".html,.htm" style="width:100%;font-size:13px">
+      <div class="row">
+        <button class="mini" id="webGo">上传页面</button>
+        <button class="mini" id="webClear">恢复内置页面</button>
+      </div>
+      <div class="row" style="margin-top:14px"><b style="font-size:13px">③ 其它</b></div>
+      <div class="row">
+        <button class="mini" id="clearBtn">清理残影</button>
+        <button class="mini" id="saveOffline">下载离线客户端</button>
+      </div>
+      <div class="hint">清理残影 = 2 次黑白全屏闪刷（约 40~60 秒）；离线客户端存成 HTML 加到主屏，不连热点也能打开。</div>
+      <div id="otabar"><div id="bar2"><div id="fill2"></div></div></div>
+      <p id="otamsg" class="hint"></p>
+    </details>
+
+    <button class="danger" id="factory" style="width:100%;margin-top:12px">恢复出厂设置</button>
+  </section>
+
+</main>
+
+<script>
+"use strict";
+
+/* 离线客户端：整页存成 file:// 打开时用它拼 URL */
+var BASE = (typeof window.MOINK_BASE === "string" && window.MOINK_BASE) ? window.MOINK_BASE : "";
+function api(p){ return BASE + p; }
+
+/* ==================================================================
+   【FROZEN】图像算法（eink-warm 已验证基线，锁定不改）
+   ================================================================== */
+var PANEL = { id: 0, name: "A0", w: 768, h: 552 };
+var MODE  = 0;
+
+var PAL = [[0,0,0], [255,255,255], [255,255,0], [255,0,0]];   /* 0K 1W 2黄 3红 */
+var C_K = 0, C_W = 1, C_Y = 2, C_R = 3;
+function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
+function mod(a,n){ return ((a%n)+n)%n; }
+function luma(r,g,b){ return r*0.2126+g*0.7152+b*0.0722; }
+function s2l(v){ v=clamp(v,0,255)/255; return 255*(v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4)); }
+function l2s(v){ v=clamp(v,0,255)/255; return 255*(v<=0.0031308?v*12.92:1.055*Math.pow(v,1/2.4)-0.055); }
+var S2L_LUT=(function(){ var t=new Float64Array(256); for(var i=0;i<256;i++)t[i]=s2l(i); return t; })();
+var PAL_LIN = PAL.map(function(p){ return p.map(s2l); });
+
+var RAMPS = {
+  sunset: [[0,[0,0,0]],[0.10,[26,6,4]],[0.26,[92,18,12]],[0.42,[168,40,16]],
+           [0.56,[214,86,18]],[0.70,[236,140,26]],[0.84,[248,200,60]],
+           [0.93,[255,235,150]],[1,[255,255,255]]],
+  ember:  [[0,[0,0,0]],[0.12,[40,4,0]],[0.28,[120,10,4]],[0.44,[196,28,6]],
+           [0.58,[232,74,6]],[0.72,[246,140,10]],[0.86,[252,204,26]],
+           [0.95,[255,240,110]],[1,[255,255,255]]],
+  duotone:[[0,[0,0,0]],[0.30,[150,20,10]],[0.55,[235,80,10]],
+           [0.78,[250,190,20]],[1,[255,255,255]]],
+  sepia:  [[0,[22,14,8]],[0.25,[92,66,38]],[0.50,[150,116,72]],
+           [0.72,[202,172,124]],[0.88,[232,212,172]],[1,[255,250,236]]]
+};
+
+var KERN = {
+  fs:     [[1,0,7/16],[-1,1,3/16],[0,1,5/16],[1,1,1/16]],
+  atkinson:[[1,0,1/8],[2,0,1/8],[-1,1,1/8],[0,1,1/8],[1,1,1/8],[0,2,1/8]],
+  burkes: [[1,0,8/32],[2,0,4/32],[-2,1,2/32],[-1,1,4/32],[0,1,8/32],[1,1,4/32],[2,1,2/32]],
+  sierra: [[1,0,2/4],[-1,1,1/4],[0,1,1/4]],
+  stucki: [[1,0,8/42],[2,0,4/42],[-2,1,2/42],[-1,1,4/42],[0,1,8/42],[1,1,4/42],[2,1,2/42],
+           [-2,2,1/42],[-1,2,2/42],[0,2,4/42],[1,2,2/42],[2,2,1/42]],
+  jarvis: [[1,0,7/48],[2,0,5/48],[-2,1,3/48],[-1,1,5/48],[0,1,7/48],[1,1,5/48],[2,1,3/48],
+           [-2,2,1/48],[-1,2,3/48],[0,2,5/48],[1,2,3/48],[2,2,1/48]]
+};
+var BAYER8 = [ 0,32, 8,40, 2,34,10,42, 48,16,56,24,50,18,58,26,
+              12,44, 4,36,14,46, 6,38, 60,28,52,20,62,30,54,22,
+               3,35,11,43, 1,33, 9,41, 51,19,59,27,49,17,57,25,
+              15,47, 7,39,13,45, 5,37, 63,31,55,23,61,29,53,21];
+
+var WARM_SAT_K = 0.75;
+var DEF = {
+  mode: "natural",
+  brightness: 0, contrast: 0, gamma: 1.00, saturation: 1.00,
+  warmCast: 0.40, castRamp: "sunset", warmCenter: 30, warmSpan: 58,
+  warmBoost: 0.60, coolPull: 0.25, coolCap: 60, coolDesat: 0.25,
+  warmPull: 0.12, warmPullCap: 18,
+  autoLevels: 1, sharpen: 0.30,
+  dither: "fs", ditherStrength: 0.85, space: "linear",
+  angle: 90, lastMode: 0, text: "", textFont: 0, textSize: 100,
+  textColor: 0, textBg: 0, autoPush: false
+};
+
+var CORE = {
+  natural:  { key: "warmBoost", def: 0.60, lab: "色彩强度",
+              hint: "只提亮画面里本来就是暖色的部分，冷色区域保持干净的黑白。" },
+  adaptive: { key: "warmCast",  def: 0.40, lab: "暖色浓度",
+              hint: "把整圈色相压进红→黄这一段，红黄最多，但照片会明显偏暖。" },
+  gray:     { key: null, lab: "色彩强度", hint: "纯灰度，只做明暗抖动。适合文档、线条画。" },
+  naive:    { key: null, lab: "色彩强度", hint: "不做任何色彩映射，直接四色抖动。" }
+};
+
+var CTRL = [
+  { id:"bright",      key:"brightness",     sc:1,   unit:"",  dec:0 },
+  { id:"contrast",    key:"contrast",       sc:1,   unit:"",  dec:0 },
+  { id:"gamma",       key:"gamma",          sc:100, unit:"",  dec:2 },
+  { id:"sat",         key:"saturation",     sc:100, unit:"%", dec:0 },
+  { id:"wcenter",     key:"warmCenter",     sc:1,   unit:"°", dec:0 },
+  { id:"wspan",       key:"warmSpan",       sc:1,   unit:"°", dec:0 },
+  { id:"coolpull",    key:"coolPull",       sc:100, unit:"%", dec:0 },
+  { id:"coolcap",     key:"coolCap",        sc:1,   unit:"°", dec:0 },
+  { id:"cooldesat",   key:"coolDesat",      sc:100, unit:"%", dec:0 },
+  { id:"warmpull",    key:"warmPull",       sc:100, unit:"%", dec:0 },
+  { id:"warmpullcap", key:"warmPullCap",    sc:1,   unit:"°", dec:0 },
+  { id:"sharpen",     key:"sharpen",        sc:100, unit:"%", dec:0 },
+  { id:"dstr",        key:"ditherStrength", sc:100, unit:"%", dec:0 }
+];
+
+function modeAR(){ return PANEL.w / PANEL.h; }
+var MODE_DEF = [
+  { name:"整幅图像", desc:"图片铺满整块屏幕，可在画面上叠一行文字。" },
+  { name:"文字便签", desc:"不放图片，整块屏幕只显示文字。" }
+];
+var FONTS = [
+  { css:"-apple-system,'PingFang SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif", w:600 },
+  { css:"'Songti SC','SimSun','Noto Serif CJK SC','Source Han Serif SC',serif",        w:600 },
+  { css:"'Kaiti SC','KaiTi','STKaiti','SimKai',serif",                                 w:600 },
+  { css:"ui-monospace,Menlo,Consolas,'Courier New',monospace",                         w:500 }
+];
+
+var _rampCache = {};
+function rampLut(name){
+  if (_rampCache[name]) return _rampCache[name];
+  var stops = RAMPS[name] || RAMPS.sunset;
+  var N = 256, out = new Float64Array(N*3);
+  var xs = [], cs = [[],[],[]];
+  for (var s = 0; s < stops.length; s++){
+    xs.push(stops[s][0]);
+    cs[0].push(stops[s][1][0]); cs[1].push(stops[s][1][1]); cs[2].push(stops[s][1][2]);
+  }
+  for (var i = 0; i < N; i++){
+    var t = i/(N-1), k = 0;
+    while (k < xs.length-2 && t >= xs[k+1]) k++;
+    for (var c = 0; c < 3; c++){
+      var slope = (cs[c][k+1]-cs[c][k])/(xs[k+1]-xs[k]);
+      out[i*3+c] = slope*(t-xs[k]) + cs[c][k];
+    }
+  }
+  _rampCache[name] = out;
+  return out;
+}
+
+function rgb2hsl(r,g,b){
+  var mx = Math.max(r,g,b), mn = Math.min(r,g,b), l = (mx+mn)*0.5, d = mx-mn, s, h;
+  var den = (l > 0.5) ? (2-mx-mn) : (mx+mn);
+  s = (d > 1e-12) ? d/Math.max(den,1e-12) : 0;
+  s = clamp(s,0,1);
+  if (d > 1e-12){
+    var rc = (mx-r)/d, gc = (mx-g)/d, bc = (mx-b)/d, hh;
+    if (mx === r) hh = bc-gc; else if (mx === g) hh = 2+rc-bc; else hh = 4+gc-rc;
+    h = mod(hh/6, 1);
+  } else h = 0;
+  return [h,s,l];
+}
+function hue2rgb(p,q,t){
+  t = mod(t,1);
+  if (t < 1/6) return p+(q-p)*6*t;
+  if (t < 0.5) return q;
+  if (t < 2/3) return p+(q-p)*(2/3-t)*6;
+  return p;
+}
+function hsl2rgb(h,s,l){
+  var q = (l < 0.5) ? l*(1+s) : l+s-l*s, p = 2*l-q;
+  return [hue2rgb(p,q,h+1/3), hue2rgb(p,q,h), hue2rgb(p,q,h-1/3)];
+}
+function warmAffinity(hd){
+  var t_hi = clamp((hd-300)/50, 0, 1);
+  var t_lo = clamp((hd-60)/50, 0, 1);
+  if (hd > 300) return t_hi*t_hi*(3-2*t_hi);
+  if (hd < 110) return 1 - t_lo*t_lo*(3-2*t_lo);
+  return 0;
+}
+
+function autoLevels(buf, n, clipv){
+  var hist = new Float64Array(256), i, L;
+  for (i = 0; i < n; i++){
+    L = luma(buf[i*3], buf[i*3+1], buf[i*3+2]);
+    hist[clamp(Math.floor(L+0.5),0,255)]++;
+  }
+  var target = clipv*n, c = 0, lo = 0, hi = 255;
+  for (i = 0; i < 256; i++){ c += hist[i]; if (c >= target){ lo = i; break; } }
+  c = 0;
+  for (i = 0; i < 256; i++){ c += hist[i]; if (c >= (1-clipv)*n){ hi = i; break; } }
+  if (hi-lo < 8) return;
+  var scale = (246-18)/(hi-lo);
+  for (i = 0; i < n*3; i++) buf[i] = (buf[i]-lo)*scale + 18;
+}
+
+function blur3(src, w, h){
+  var tmp = new Float64Array(w*h*3), out = new Float64Array(w*h*3);
+  var x, y, c, o, xm, xp, ym, yp;
+  for (y = 0; y < h; y++) for (x = 0; x < w; x++){
+    xm = (x-1 < 0) ? 0 : x-1; xp = (x+1 >= w) ? w-1 : x+1;
+    o = (y*w+x)*3;
+    for (c = 0; c < 3; c++)
+      tmp[o+c] = src[(y*w+xm)*3+c] + 2*src[(y*w+x)*3+c] + src[(y*w+xp)*3+c];
+  }
+  for (y = 0; y < h; y++) for (x = 0; x < w; x++){
+    ym = (y-1 < 0) ? 0 : y-1; yp = (y+1 >= h) ? h-1 : y+1;
+    o = (y*w+x)*3;
+    for (c = 0; c < 3; c++)
+      out[o+c] = (tmp[(ym*w+x)*3+c] + 2*tmp[(y*w+x)*3+c] + tmp[(yp*w+x)*3+c])*0.0625;
+  }
+  return out;
+}
+
+function warmMap(buf, w, h, cfg){
+  var n = w*h, i, v;
+  var out = new Float64Array(n*3);
+  for (i = 0; i < n*3; i++){
+    v = buf[i];
+    if (cfg.brightness) v += cfg.brightness;
+    if (cfg.contrast)   v = (v-128)*(1+cfg.contrast/100) + 128;
+    if (cfg.gamma !== 1) v = 255*Math.pow(clamp(v,0,255)/255, cfg.gamma);
+    buf[i] = clamp(v,0,255);
+  }
+  if (cfg.autoLevels){
+    autoLevels(buf, n, 0.005);
+    for (i = 0; i < n*3; i++) buf[i] = clamp(buf[i],0,255);
+  }
+  if (cfg.sharpen > 0){
+    var bl = blur3(buf, w, h);
+    for (i = 0; i < n*3; i++) buf[i] = clamp(buf[i] + cfg.sharpen*(buf[i]-bl[i]), 0, 255);
+  }
+  var mode = cfg.mode;
+  if (mode === "naive" || mode === "gray"){
+    for (i = 0; i < n; i++){
+      var Lg = clamp(luma(buf[i*3], buf[i*3+1], buf[i*3+2]), 0, 255);
+      if (mode === "gray"){ out[i*3] = out[i*3+1] = out[i*3+2] = Lg; }
+      else { out[i*3] = buf[i*3]; out[i*3+1] = buf[i*3+1]; out[i*3+2] = buf[i*3+2]; }
+    }
+    return out;
+  }
+  if (mode === "natural"){
+    for (i = 0; i < n; i++){
+      var hsl = rgb2hsl(buf[i*3]/255, buf[i*3+1]/255, buf[i*3+2]/255);
+      var hd = hsl[0]*360, s = hsl[1], l = hsl[2];
+      var wa = warmAffinity(hd);
+      var g = clamp(cfg.warmBoost*wa, 0, 1);
+      var s2 = Math.pow(s, 1 - WARM_SAT_K*g);
+      s2 = s2 * (1 - clamp(cfg.coolDesat*(1-wa), 0, 1));
+      s2 = clamp(s2 * cfg.saturation, 0, 1);
+      var drift = -cfg.coolPull*(1-wa)*(hd-60);
+      drift = clamp(drift, -cfg.coolCap, 0);
+      var d2 = mod(cfg.warmCenter - hd + 540, 360) - 180;
+      var pull = clamp(cfg.warmPull*d2, -cfg.warmPullCap, cfg.warmPullCap);
+      var h2 = mod(hd + drift + wa*pull, 360);
+      var fin = hsl2rgb(h2/360, s2, l);
+      out[i*3]   = clamp(fin[0]*255, 0, 255);
+      out[i*3+1] = clamp(fin[1]*255, 0, 255);
+      out[i*3+2] = clamp(fin[2]*255, 0, 255);
+    }
+    return out;
+  }
+  /* adaptive：整圈色相压进暖色带，再叠一层暖色渐变 */
+  var lut = rampLut(cfg.castRamp), cast = cfg.warmCast;
+  for (i = 0; i < n; i++){
+    var hs = rgb2hsl(buf[i*3]/255, buf[i*3+1]/255, buf[i*3+2]/255);
+    var hda = mod(cfg.warmCenter + (hs[0]-0.5)*cfg.warmSpan, 360);
+    var ya = hsl2rgb(hda/360, hs[1], hs[2]);
+    var r0 = ya[0]*255, g0 = ya[1]*255, b0 = ya[2]*255;
+    var lm = clamp(Math.floor(clamp(luma(r0,g0,b0),0,255)+0.5), 0, 255);
+    r0 = r0*(1-cast) + lut[lm*3]*cast;
+    g0 = g0*(1-cast) + lut[lm*3+1]*cast;
+    b0 = b0*(1-cast) + lut[lm*3+2]*cast;
+    var h3 = rgb2hsl(clamp(r0,0,255)/255, clamp(g0,0,255)/255, clamp(b0,0,255)/255);
+    var s3 = clamp(h3[1]*cfg.saturation, 0, 1);
+    var f3 = hsl2rgb(h3[0], s3, h3[2]);
+    out[i*3]   = clamp(f3[0]*255, 0, 255);
+    out[i*3+1] = clamp(f3[1]*255, 0, 255);
+    out[i*3+2] = clamp(f3[2]*255, 0, 255);
+  }
+  return out;
+}
+
+function quantize(mapped, w, h, cfg){
+  var n = w*h, i;
+  var out = new Uint8Array(n);
+  var flat = new Float64Array(mapped);
+  var mode = cfg.dither, strength = cfg.ditherStrength;
+  var lin = (cfg.space === "linear");
+  var pal = lin ? PAL_LIN : PAL;
+  if (lin){
+    for (i = 0; i < n*3; i++){
+      var v = clamp(flat[i], 0, 255);
+      flat[i] = S2L_LUT[(v + 0.5) | 0];
+    }
+  }
+  function nearest(o){
+    var r = flat[o], g = flat[o+1], b = flat[o+2], bi = 0, bd = Infinity;
+    for (var kk = 0; kk < 4; kk++){
+      var p = pal[kk], dr = r-p[0], dg = g-p[1], db = b-p[2];
+      var d = dr*dr + dg*dg + db*db;
+      if (d < bd){ bd = d; bi = kk; }
+    }
+    return bi;
+  }
+  if (mode === "none"){
+    for (i = 0; i < n; i++) out[i] = nearest(i*3);
+    return out;
+  }
+  if (mode === "bayer"){
+    var amp = strength*128;
+    for (var y = 0; y < h; y++){
+      var rowb = (y&7)*8;
+      for (var x = 0; x < w; x++){
+        var o = (y*w+x)*3;
+        var off = (BAYER8[rowb+(x&7)]/64 - 0.5)*amp;
+        flat[o]   = clamp(flat[o]+off,0,255);
+        flat[o+1] = clamp(flat[o+1]+off,0,255);
+        flat[o+2] = clamp(flat[o+2]+off,0,255);
+        out[y*w+x] = nearest(o);
+      }
+    }
+    return out;
+  }
+  var kernel = KERN[mode] || KERN.fs;
+  for (var yy = 0; yy < h; yy++){
+    var ltr = (yy%2 === 0), base = yy*w*3;
+    for (var ii = 0; ii < w; ii++){
+      var xx = ltr ? ii : (w-1-ii);
+      var oo = base + xx*3;
+      var k = nearest(oo);
+      out[yy*w+xx] = k;
+      if (strength <= 0) continue;
+      var pp = pal[k];
+      var er = (flat[oo]-pp[0])*strength, eg = (flat[oo+1]-pp[1])*strength,
+          eb = (flat[oo+2]-pp[2])*strength;
+      for (var m = 0; m < kernel.length; m++){
+        var nx = xx + (ltr ? kernel[m][0] : -kernel[m][0]), ny = yy + kernel[m][1];
+        if (nx >= 0 && nx < w && ny < h){
+          var no = (ny*w+nx)*3, wg = kernel[m][2];
+          flat[no] += er*wg; flat[no+1] += eg*wg; flat[no+2] += eb*wg;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function statsOf(idx){
+  var c = [0,0,0,0], n = idx.length;
+  for (var i = 0; i < n; i++) c[idx[i]]++;
+  return { k:c[C_K]/n, w:c[C_W]/n, y:c[C_Y]/n, r:c[C_R]/n };
+}
+
+/* ==================================================================
+   渲染与打包（与固件帧契约一致）
+   ================================================================== */
+function isCJK(ch){
+  var c = ch.charCodeAt(0);
+  return (c >= 0x2E80 && c <= 0x9FFF) || (c >= 0x3000 && c <= 0x303F) ||
+         (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFF00 && c <= 0xFFEF);
+}
+function wrapText(ctx, text, maxW){
+  var out = [];
+  var paras = String(text).split(/\r?\n/);
+  for (var p = 0; p < paras.length; p++){
+    var s = paras[p];
+    if (!s.length){ out.push(""); continue; }
+    var line = "";
+    for (var i = 0; i < s.length; i++){
+      var ch = s.charAt(i);
+      var test = line + ch;
+      if (line.length && ctx.measureText(test).width > maxW){
+        var sp = -1;
+        if (!isCJK(ch)){
+          for (var k = line.length - 1; k > 0 && (line.length - k) < 16; k--){
+            if (line.charAt(k) === " "){ sp = k; break; }
+          }
+        }
+        if (sp > 0){ out.push(line.slice(0, sp)); line = line.slice(sp + 1) + ch; }
+        else { out.push(line); line = ch; }
+      } else { line = test; }
+    }
+    if (line.length) out.push(line);
+  }
+  return out;
+}
+function textMetrics(cw, ch){
+  var padX = Math.round(cw * 0.06);
+  var padY = Math.round(ch * 0.10);
+  var base = Math.round(Math.min(cw, ch) * 0.082);
+  var size = Math.max(10, Math.round(base * clamp(+cfg.textSize, 40, 260) / 100));
+  return { colX: 0, colW: cw, padX: padX, padY: padY,
+           size: size, lh: Math.round(size * 1.42) };
+}
+function drawTextLayer(ctx, cw, ch, clip, noBg){
+  var tm = textMetrics(cw, ch);
+  var bg = cfg.textBg ? [0,0,0] : [255,255,255];
+  var fg = PAL[clamp(+cfg.textColor|0, 0, 3)];
+  var out = { y0: 0, y1: 0 };
+  if (clip){
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(clip.x, clip.y, clip.w, clip.h);
+    ctx.clip();
+  }
+  if (!noBg){                      /* 图像模式叠加文字时透明底，避免盖住图片 */
+    ctx.fillStyle = "rgb(" + bg[0] + "," + bg[1] + "," + bg[2] + ")";
+    ctx.fillRect(0, 0, cw, ch);
+  }
+  var txt = String(cfg.text == null ? "" : cfg.text).replace(/\s+$/, "");
+  if (txt){
+    var f = FONTS[clamp(+cfg.textFont|0, 0, FONTS.length-1)];
+    ctx.font = f.w + " " + tm.size + "px " + f.css;
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "rgb(" + fg[0] + "," + fg[1] + "," + fg[2] + ")";
+    var maxW = Math.max(20, tm.colW - tm.padX*2);
+    var lines = wrapText(ctx, txt, maxW);
+    var blockH = lines.length * tm.lh;
+    var availH = ch - tm.padY*2;
+    var yTop = tm.padY + Math.max(0, Math.round((availH - blockH)/2));
+    for (var i = 0; i < lines.length; i++){
+      var lw = ctx.measureText(lines[i]).width;
+      var lx = tm.colX + tm.padX + Math.max(0, Math.round((maxW - lw)/2));
+      ctx.fillText(lines[i], lx, yTop + tm.size + i*tm.lh);
+    }
+    out.y0 = Math.max(0, yTop - 4);
+    out.y1 = Math.min(ch, Math.round(yTop + blockH) + 4);
+  }
+  if (clip) ctx.restore();
+  return out;
+}
+
+function toBuf(canvas){
+  var w = canvas.width, h = canvas.height;
+  var d = canvas.getContext("2d").getImageData(0,0,w,h).data;
+  var n = w*h, buf = new Float64Array(n*3);
+  for (var i = 0; i < n; i++){
+    buf[i*3] = d[i*4]; buf[i*3+1] = d[i*4+1]; buf[i*3+2] = d[i*4+2];
+  }
+  return buf;
+}
+function drawCropInto(ctx, dx, dy, dw, dh){
+  if (!img || !crop) return;
+  var rad = angle * Math.PI / 180;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(dx, dy, dw, dh);
+  ctx.clip();
+  ctx.translate(dx + dw/2, dy + dh/2);
+  ctx.scale(dw/crop.w, dh/crop.h);
+  ctx.rotate(-rad);
+  ctx.translate(-crop.cx, -crop.cy);
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+}
+/* 文字不参与风格化：图像层单独走 warmMap + quantize（抖动/色调只作用于图像），
+   文字以纯调色板色最后叠加，读回时就近吸附调色板（文字边缘干净、无抖动）。 */
+function snapIdx(r, g, b){
+  var best = 0, bd = Infinity;
+  for (var i = 0; i < PAL.length; i++){
+    var p = PAL[i];
+    var dr = r - p[0], dg = g - p[1], db = b - p[2];
+    var d = dr*dr + dg*dg + db*db;
+    if (d < bd){ bd = d; best = i; }
+  }
+  return best;
+}
+function renderComposite(cw, ch){
+  var cv = document.createElement("canvas");
+  cv.width = cw; cv.height = ch;
+  var ctx = cv.getContext("2d", { willReadFrequently: true });
+  if (MODE === 0){
+    /* 图像层：白底 + 裁剪图 → 风格化 + 量化 */
+    var base = document.createElement("canvas");
+    base.width = cw; base.height = ch;
+    var bctx = base.getContext("2d", { willReadFrequently: true });
+    bctx.fillStyle = "#fff";
+    bctx.fillRect(0, 0, cw, ch);
+    if (img && crop) drawCropInto(bctx, 0, 0, cw, ch);
+    var idx0 = quantize(warmMap(toBuf(base), cw, ch, cfg), cw, ch, cfg);
+    var im = ctx.createImageData(cw, ch), dd = im.data;
+    for (var i = 0; i < cw*ch; i++){
+      var p = PAL[idx0[i]];
+      dd[i*4] = p[0]; dd[i*4+1] = p[1]; dd[i*4+2] = p[2]; dd[i*4+3] = 255;
+    }
+    ctx.putImageData(im, 0, 0);
+    /* 文字层：透明底直接叠加 */
+    drawTextLayer(ctx, cw, ch, null, true);
+  } else {
+    /* 便签：底色 + 文字直接绘制，不做风格化 */
+    drawTextLayer(ctx, cw, ch, null, false);
+  }
+  /* 读回就近吸附调色板 */
+  var d = ctx.getImageData(0, 0, cw, ch).data;
+  var idx = new Uint8Array(cw * ch);
+  for (var i = 0; i < cw*ch; i++){
+    idx[i] = snapIdx(d[i*4], d[i*4+1], d[i*4+2]);
+  }
+  return idx;
+}
+function renderTo(cv, cw, ch){
+  var idx = renderComposite(cw, ch);
+  cv.width = cw; cv.height = ch;
+  var ctx = cv.getContext("2d");
+  var im = ctx.createImageData(cw, ch), dd = im.data;
+  for (var i = 0; i < cw*ch; i++){
+    var p = PAL[idx[i]];
+    dd[i*4] = p[0]; dd[i*4+1] = p[1]; dd[i*4+2] = p[2]; dd[i*4+3] = 255;
+  }
+  ctx.putImageData(im, 0, 0);
+  return idx;
+}
+function packIdx(idx){
+  var W = PANEL.w, H = PANEL.h, RB = W >> 2;
+  var out = new Uint8Array(RB*H);
+  for (var r = 0; r < H; r++){
+    var ro = (H - 1 - r) * W, bo = r * RB;
+    for (var xb = 0; xb < RB; xb++){
+      var xa = W - 4 - (xb << 2);
+      out[bo + xb] = (idx[ro+xa+3] << 6) | (idx[ro+xa+2] << 4) |
+                     (idx[ro+xa+1] << 2) | idx[ro+xa];
+    }
+  }
+  return out;
+}
+function packFull(){
+  return packIdx(renderComposite(PANEL.w, PANEL.h));
+}
+function imgSig(){
+  return JSON.stringify([
+    PANEL.w, PANEL.h, MODE,
+    crop ? [Math.round(crop.cx), Math.round(crop.cy), Math.round(crop.w), Math.round(crop.h)] : null,
+    Math.round(angle),
+    cfg.mode, cfg.brightness, cfg.contrast, cfg.gamma, cfg.saturation,
+    cfg.warmCast, cfg.castRamp, cfg.warmCenter, cfg.warmSpan, cfg.warmBoost,
+    cfg.coolPull, cfg.coolCap, cfg.coolDesat, cfg.warmPull, cfg.warmPullCap,
+    cfg.autoLevels, cfg.sharpen, cfg.dither, cfg.ditherStrength, cfg.space
+  ]);
+}
+
+/* ==================================================================
+   帧头（16 字节，大端）+ CRC16，与固件 frame.c 一致
+   ================================================================== */
+function crc16(data){
+  var crc = 0xFFFF;
+  for (var i = 0; i < data.length; i++){
+    crc ^= data[i] << 8;
+    for (var b = 0; b < 8; b++){
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
+    }
+  }
+  return crc & 0xFFFF;
+}
+function frameWithHeader(payload){
+  var hdr = new Uint8Array(16);
+  var len = payload.length;
+  var crc = crc16(payload);
+  hdr[0] = 0xA5; hdr[1] = 0x5A; hdr[2] = 1; hdr[3] = PANEL.id;
+  hdr[4] = (PANEL.w >> 8) & 0xFF; hdr[5] = PANEL.w & 0xFF;
+  hdr[6] = (PANEL.h >> 8) & 0xFF; hdr[7] = PANEL.h & 0xFF;
+  hdr[8] = (len >>> 24) & 0xFF; hdr[9] = (len >>> 16) & 0xFF;
+  hdr[10] = (len >>> 8) & 0xFF; hdr[11] = len & 0xFF;
+  hdr[12] = (crc >>> 8) & 0xFF; hdr[13] = crc & 0xFF;
+  hdr[14] = 0; hdr[15] = 0;
+  var out = new Uint8Array(16 + len);
+  out.set(hdr, 0); out.set(payload, 16);
+  return out;
+}
+
+/* ==================================================================
+   DOM 与状态
+   ================================================================== */
+var $ = function(id){ return document.getElementById(id); };
+var fileEl = $("file"), coreEl = $("core"), dmodeEl = $("dmode");
+var levelsEl = $("levels"), spaceEl = $("space");
+var srcEl = $("src"), stageEl = $("stage"), cropEl = $("crop");
+var prevEl = $("prev"), goEl = $("go"), msgEl = $("msg");
+var barEl = $("bar"), fillEl = $("fill"), statHintEl = $("stathint");
+var dropEl = $("drop"), txtEl = $("txt");
+
+var cfg = Object.assign({}, DEF);
+var img = null;
+var crop = null;
+var angle = DEF.angle;
+var previewTimer = null, previewBusy = false, previewWant = null;
+var previewOK = false;   /* 图像管线离线跑通标记：预览成功才允许上传（用户要求：先离线跑通再 OTA） */
+/* 裸页面以 file:// 打开（未注入 MOINK_BASE）= 纯本地预览：
+   渲染/裁剪可用，但 API 全部不可达——上传类操作给出明确提示而非「net」。 */
+var LOCAL_PREVIEW = (location.protocol === "file:" && !BASE);
+var pushTimer = null;
+
+function msg(s, cls){ msgEl.textContent = s; msgEl.className = cls || ""; }
+
+var LS_KEY = "moink.cfg4";
+var LS_KEY_OLD = "einkframe.cfg4";
+function saveCfg(){ try { localStorage.setItem(LS_KEY, JSON.stringify(cfg)); } catch(e){} }
+function loadCfg(){
+  try {
+    var t = localStorage.getItem(LS_KEY) || localStorage.getItem(LS_KEY_OLD);
+    if (t) Object.assign(cfg, JSON.parse(t));
+  } catch(e){}
+  angle = mod(+cfg.angle || DEF.angle, 360);
+  if (Math.abs(angle - Math.round(angle/90)*90) > 0.5) angle = DEF.angle;
+}
+
+/* ---------- 预览 ---------- */
+function preview(){
+  if (previewBusy || !previewWant) return;
+  if (MODE === 0 && !img){ previewWant = null; return; }
+  var fast = (previewWant === "fast");
+  previewWant = null;
+  previewBusy = true;
+  var t0 = Date.now();
+  try {
+    var div = fast ? 2 : 1;
+    var idx = renderTo(prevEl, Math.round(PANEL.w/div), Math.round(PANEL.h/div));
+    var ms = Date.now() - t0;
+    var st = statsOf(idx);
+    statHintEl.textContent =
+      "黑 " + (st.k*100).toFixed(0) + "% · 白 " + (st.w*100).toFixed(0) +
+      "% · 黄 " + (st.y*100).toFixed(0) + "% · 红 " + (st.r*100).toFixed(0) +
+      "%（" + ms + " ms" + (fast ? "，拖动中" : "") + "）";
+    previewOK = true;
+    goEl.disabled = (MODE === 0) ? (!img || !previewOK) : false;
+    if (!fast) msg("预览已跑通，可点击上传", "");
+  } catch (e){
+    previewOK = false;
+    statHintEl.textContent = "预览失败：" + e.message;
+    if (MODE === 0) goEl.disabled = true;
+    if (!fast) msg("预览失败：" + e.message + "（已阻止上传）", "err");
+  }
+  previewBusy = false;
+  if (previewWant){ preview(); return; }
+  if (fast){
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(function(){ previewWant = "full"; preview(); }, 320);
+  }
+}
+function schedulePreview(fast){
+  clearTimeout(previewTimer);
+  if (fast){ previewWant = "fast"; preview(); return; }
+  previewWant = "full";
+  previewTimer = setTimeout(preview, 130);
+}
+
+/* ---------- 呈现模式 ---------- */
+function setMode(m, silent){
+  MODE = (+m === 1) ? 1 : 0;
+  document.querySelectorAll("#modes button").forEach(function(b){
+    b.classList.toggle("on", +b.dataset.m === MODE);
+  });
+  $("modeDesc").textContent = MODE_DEF[MODE].desc;
+  var imageMode = (MODE === 0);
+  $("pickCard").style.display  = imageMode ? "" : "none";
+  $("cropCard").style.display  = imageMode ? "" : "none";
+  $("autoPushRow").style.display = imageMode ? "none" : "";
+  $("tbgWrap").style.display = imageMode ? "none" : "";   /* 底色仅便签模式有意义 */
+  if (imageMode && img) resetCrop();
+  goEl.disabled = imageMode ? !img : false;
+  if (!silent) msg(imageMode ? "已切换到「整幅图像」" : "便签模式：直接写文字即可");
+  cfg.lastMode = MODE;
+  saveCfg();
+  schedulePreview(false);
+  if (!silent && cfg.autoPush && MODE === 1) scheduleAutoPush();
+}
+document.querySelectorAll("#modes button").forEach(function(b){
+  b.addEventListener("click", function(){ setMode(+b.dataset.m); });
+});
+
+/* ---------- 裁剪（M5：90° 步进，无自由角度条） ---------- */
+function rotAABB(w, h){
+  var t = mod(angle, 180) * Math.PI / 180;
+  var c = Math.abs(Math.cos(t)), s = Math.abs(Math.sin(t));
+  return { w: w*c + h*s, h: w*s + h*c };
+}
+function maxCropW(){
+  if (!img) return 0;
+  var W = img.naturalWidth, H = img.naturalHeight, ar = modeAR();
+  var t = mod(angle, 180) * Math.PI / 180;
+  var c = Math.abs(Math.cos(t)), s = Math.abs(Math.sin(t));
+  var a = c + s/ar, b = s + c/ar;
+  var w = Math.min(a > 1e-9 ? W/a : Infinity, b > 1e-9 ? H/b : Infinity);
+  return Math.max(24, Math.floor(w));
+}
+function fitCrop(){
+  if (!img || !crop) return;
+  var W = img.naturalWidth, H = img.naturalHeight, ar = modeAR();
+  var mx = maxCropW();
+  if (crop.w > mx){ crop.w = mx; crop.h = Math.round(mx/ar); }
+  var ab = rotAABB(crop.w, crop.h);
+  crop.cx = (ab.w <= W) ? clamp(crop.cx, ab.w/2, W - ab.w/2) : W/2;
+  crop.cy = (ab.h <= H) ? clamp(crop.cy, ab.h/2, H - ab.h/2) : H/2;
+}
+function stageScale(){
+  if (!img || !srcEl.clientWidth) return 1;
+  return srcEl.clientWidth / img.naturalWidth;
+}
+function renderStage(){
+  if (!img) return;
+  var bw = Math.min(img.naturalWidth, 1400);
+  var bh = Math.max(1, Math.round(img.naturalHeight * bw / img.naturalWidth));
+  srcEl.width = bw; srcEl.height = bh;
+  var ctx = srcEl.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, bw, bh);
+  ctx.drawImage(img, 0, 0, bw, bh);
+  layoutCrop();
+}
+function layoutCrop(){
+  if (!img || !crop) return;
+  var s = stageScale();
+  cropEl.style.left   = ((crop.cx - crop.w/2) * s) + "px";
+  cropEl.style.top    = ((crop.cy - crop.h/2) * s) + "px";
+  cropEl.style.width  = (crop.w * s) + "px";
+  cropEl.style.height = (crop.h * s) + "px";
+  cropEl.style.transform = "rotate(" + angle + "deg)";
+  $("rotVal").textContent = Math.round(angle) + "°";
+}
+function resetCrop(){
+  if (!img) return;
+  fitCrop();
+  var m = maxCropW(), ar = modeAR();
+  crop = { cx: img.naturalWidth/2, cy: img.naturalHeight/2, w: m, h: Math.round(m/ar) };
+  fitCrop();
+  layoutCrop();
+}
+function setAngle(a){
+  angle = mod(Math.round(mod(a,360)/90)*90, 360);   /* 严格吸附 90° 整数倍 */
+  cfg.angle = angle;
+  fitCrop();
+  layoutCrop();
+  saveCfg();
+}
+
+var drag = null;
+function onDown(e){
+  if (!img || !crop) return;
+  var corner = (e.target && e.target.dataset) ? e.target.dataset.h : null;
+  drag = { mode: corner || "m", sx: e.clientX, sy: e.clientY,
+           c: { cx:crop.cx, cy:crop.cy, w:crop.w, h:crop.h } };
+  e.preventDefault();
+  document.addEventListener("pointermove", onMove, { passive:false });
+  document.addEventListener("pointerup", onUp);
+  document.addEventListener("pointercancel", onUp);
+}
+function onMove(e){
+  if (!drag || !img) return;
+  var s = stageScale();
+  if (!s) return;
+  var dx = (e.clientX - drag.sx)/s, dy = (e.clientY - drag.sy)/s;
+  var ar = modeAR(), c0 = drag.c, MIN = 32, nw, nh;
+  if (drag.mode === "m"){
+    crop = { cx: c0.cx + dx, cy: c0.cy + dy, w: c0.w, h: c0.h };
+  } else {
+    nw = (drag.mode === "br" || drag.mode === "tr") ? (c0.w + dx) : (c0.w - dx);
+    nw = Math.max(MIN, Math.min(nw, maxCropW()));
+    nh = Math.round(nw/ar);
+    var gx = (drag.mode === "br" || drag.mode === "tr") ? 1 : -1;
+    crop = { cx: c0.cx + gx*(nw - c0.w)/2, cy: c0.cy + gx*(nh - c0.h)/2,
+             w: nw, h: nh };
+  }
+  fitCrop();
+  layoutCrop();
+  schedulePreview(true);
+}
+function onUp(){
+  drag = null;
+  document.removeEventListener("pointermove", onMove);
+  document.removeEventListener("pointerup", onUp);
+  document.removeEventListener("pointercancel", onUp);
+  schedulePreview(false);
+}
+cropEl.addEventListener("pointerdown", onDown);
+window.addEventListener("resize", function(){ layoutCrop(); });
+$("cropMax").addEventListener("click", function(){
+  if (!img) return;
+  var m = maxCropW(), ar = modeAR();
+  crop = { cx: img.naturalWidth/2, cy: img.naturalHeight/2, w: m, h: Math.round(m/ar) };
+  layoutCrop(); schedulePreview(false);
+});
+$("cropCenter").addEventListener("click", function(){
+  if (!img || !crop) return;
+  crop.cx = img.naturalWidth/2; crop.cy = img.naturalHeight/2;
+  layoutCrop(); schedulePreview(false);
+});
+$("rotStep").addEventListener("click", function(){ setAngle(angle + 90); schedulePreview(false); });
+stageEl.addEventListener("wheel", function(e){
+  if (!img || !crop) return;
+  e.preventDefault();
+  var s = stageScale() || 1;
+  var step = (e.deltaY < 0 ? 1 : -1) * Math.max(4, Math.round(20/s));
+  var ar = modeAR();
+  var nw = clamp(crop.w + step, 32, maxCropW());
+  crop.w = nw; crop.h = Math.round(nw/ar);
+  layoutCrop(); schedulePreview(true);
+}, { passive:false });
+
+/* ---------- 选图（回归 M7 状态；仅保留 URL 保活修缩略图 + 预览锁） ---------- */
+var imgUrl = null;
+function loadFile(f){
+  if (!f) return;
+  if (!/^image\//.test(f.type)){ msg("请选择图片文件", "err"); return; }
+  var url = URL.createObjectURL(f);
+  var im = new Image();
+  im.onload = function(){
+    if (imgUrl && imgUrl !== url) URL.revokeObjectURL(imgUrl);
+    imgUrl = url;
+    img = im;
+    previewOK = false;   /* 新图未预览，先锁上传 */
+    $("filerow").style.display = "flex";
+    dropEl.classList.add("has");
+    $("thumb").src = im.src;
+    $("fname").textContent = f.name + "  ·  " + im.naturalWidth + "×" + im.naturalHeight;
+    dropEl.querySelector("b").textContent = "已选择 · 可再拖入或粘贴新图";
+    msg("正在处理…", "");
+    renderStage();
+    resetCrop();
+    setMode(MODE, true);
+    if (MODE === 0) goEl.disabled = true;   /* 预览跑通前禁止上传 */
+    schedulePreview(false);
+  };
+  im.onerror = function(){ msg("图片解码失败，换一张试试", "err"); };
+  im.src = url;
+}
+dropEl.addEventListener("click", function(){ fileEl.click(); });
+$("refile").addEventListener("click", function(e){ e.stopPropagation(); fileEl.click(); });
+fileEl.addEventListener("change", function(){ loadFile(fileEl.files[0]); });
+["dragenter","dragover"].forEach(function(ev){
+  document.addEventListener(ev, function(e){ e.preventDefault(); });
+});
+document.addEventListener("drop", function(e){
+  e.preventDefault();
+  if (e.dataTransfer && e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+document.addEventListener("paste", function(e){
+  var items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (var i = 0; i < items.length; i++){
+    if (items[i].type.indexOf("image") === 0){
+      loadFile(items[i].getAsFile()); return;
+    }
+  }
+});
+
+/* ---------- 风格 ---------- */
+function setCtrlVal(c, val){
+  var el = $(c.id);
+  el.value = Math.round(val*c.sc);
+  var out = $("o-" + c.id);
+  if (out) out.textContent = (c.dec ? (+el.value/c.sc).toFixed(c.dec) : Math.round(+el.value/c.sc)) + c.unit;
+  cfg[c.key] = +el.value / c.sc;
+}
+function modeName(m){
+  return { natural:"自然暖调", adaptive:"全面暖色", gray:"纯灰度", naive:"原色直出" }[m] || m;
+}
+function mark(elId, isDef){ var el = $(elId); if (el) el.classList.toggle("off", !!isDef); }
+function refreshDefMarks(){
+  var m = CORE[cfg.mode] || CORE.natural;
+  var coreDef = m.key ? (Math.abs(cfg[m.key] - m.def) < 0.005) : true;
+  mark("d-core", coreDef);
+  var nDiff = 0;
+  CTRL.forEach(function(c){
+    var rawDef = Math.round(DEF[c.key]*c.sc);
+    var isDef = (+$(c.id).value === rawDef);
+    mark("d-" + c.id, isDef);
+    if (!isDef) nDiff++;
+  });
+  mark("d-levels", !!cfg.autoLevels === !!DEF.autoLevels);
+  if (cfg.autoLevels != DEF.autoLevels) nDiff++;
+  mark("d-dmode", cfg.dither === DEF.dither);
+  if (cfg.dither !== DEF.dither) nDiff++;
+  mark("d-space", (cfg.space || DEF.space) === DEF.space);
+  if ((cfg.space || DEF.space) !== DEF.space) nDiff++;
+  if (!coreDef) nDiff++;
+  if (cfg.mode !== DEF.mode) nDiff++;
+  var all = (nDiff === 0);
+  mark("d-all", all);
+  $("advnote").textContent = all
+    ? "当前使用已验证的默认参数（" + modeName(DEF.mode) + "）。"
+    : "已调整 " + nDiff + " 项；点「恢复默认参数」可回到基线。";
+}
+function applyMode(mode){
+  cfg.mode = mode;
+  document.querySelectorAll("#presets button").forEach(function(b){
+    b.classList.toggle("on", b.dataset.m === mode);
+  });
+  var m = CORE[mode] || CORE.natural;
+  $("coreLab").textContent = m.lab;
+  $("coreHint").textContent = m.hint;
+  if (m.key){
+    coreEl.disabled = false;
+    coreEl.value = Math.round(cfg[m.key]*100);
+    $("o-core").textContent = coreEl.value + "%";
+  } else {
+    coreEl.disabled = true;
+    $("o-core").textContent = "—";
+  }
+  refreshDefMarks(); saveCfg();
+}
+
+/* 动态生成 13 个高级滑块 */
+(function(){
+  var box = $("ctrls");
+  CTRL.forEach(function(c){
+    var d = document.createElement("div");
+    d.className = "slider";
+    var lab = document.createElement("label");
+    lab.textContent = (c.key === "warmCenter" || c.key === "warmSpan" || c.key === "coolCap" || c.key === "warmPullCap")
+      ? ({warmCenter:"暖色中心",warmSpan:"暖色跨度",coolCap:"冷色上限",warmPullCap:"暖色吸引上限"}[c.key])
+      : ({brightness:"亮度",contrast:"对比度",gamma:"伽马",saturation:"饱和度",coolPull:"冷色抑制",coolDesat:"冷色去饱和",warmPull:"暖色吸引",sharpen:"锐化",ditherStrength:"抖动强度"}[c.key]);
+    var in_ = document.createElement("input");
+    in_.type = "range"; in_.id = c.id;
+    in_.min = Math.round((c.key === "gamma" ? 0.5 : (c.key === "warmCenter" ? 0 : 0)) * (c.key==="gamma"?100:c.sc));
+    if (c.key === "gamma"){ in_.min = 50; in_.max = 250; }
+    else if (c.key === "brightness" || c.key === "contrast"){ in_.min = -100; in_.max = 100; }
+    else if (c.key === "warmCenter"){ in_.min = 0; in_.max = 60; }
+    else if (c.key === "warmSpan"){ in_.min = 10; in_.max = 120; }
+    else if (c.key === "coolCap" || c.key === "warmPullCap"){ in_.min = 0; in_.max = 60; }
+    else { in_.min = 0; in_.max = 100; }
+    in_.value = Math.round(DEF[c.key]*c.sc);
+    var out = document.createElement("output");
+    out.id = "o-" + c.id;
+    var dm = document.createElement("span");
+    dm.className = "dmark off"; dm.id = "d-" + c.id; dm.textContent = "默认";
+    d.appendChild(lab); d.appendChild(in_); d.appendChild(out); d.appendChild(dm);
+    box.appendChild(d);
+
+    in_.addEventListener("input", function(){
+      cfg[c.key] = +in_.value / c.sc;
+      out.textContent = (c.dec ? (+in_.value/c.sc).toFixed(c.dec) : Math.round(+in_.value/c.sc)) + c.unit;
+      refreshDefMarks(); saveCfg(); schedulePreview(true);
+    });
+    in_.addEventListener("change", function(){ schedulePreview(false); });
+  });
+})();
+
+coreEl.addEventListener("input", function(){
+  var m = CORE[cfg.mode];
+  if (!m.key) return;
+  cfg[m.key] = +coreEl.value/100;
+  $("o-core").textContent = coreEl.value + "%";
+  refreshDefMarks(); saveCfg(); schedulePreview(true);
+});
+coreEl.addEventListener("change", function(){ schedulePreview(false); });
+dmodeEl.addEventListener("change", function(){ cfg.dither = dmodeEl.value; refreshDefMarks(); saveCfg(); schedulePreview(false); });
+spaceEl.addEventListener("change", function(){ cfg.space = spaceEl.value; refreshDefMarks(); saveCfg(); schedulePreview(false); });
+levelsEl.addEventListener("change", function(){ cfg.autoLevels = levelsEl.checked ? 1 : 0; refreshDefMarks(); saveCfg(); schedulePreview(false); });
+document.querySelectorAll("#presets button").forEach(function(b){
+  b.addEventListener("click", function(){ applyMode(b.dataset.m); schedulePreview(false); });
+});
+$("resetAdv").addEventListener("click", function(){
+  CTRL.forEach(function(c){ setCtrlVal(c, DEF[c.key]); });
+  cfg.dither = DEF.dither;  dmodeEl.value = DEF.dither;
+  cfg.space = DEF.space; spaceEl.value = DEF.space;
+  cfg.autoLevels = DEF.autoLevels; levelsEl.checked = !!DEF.autoLevels;
+  applyMode(DEF.mode);
+  refreshDefMarks(); saveCfg(); schedulePreview(false);
+  msg("已恢复默认参数（" + modeName(DEF.mode) + "）", "ok");
+});
+
+/* ---------- 文字 ---------- */
+FONTS.forEach(function(f, i){
+  var o = document.createElement("option");
+  o.value = i; o.textContent = ["系统默认","宋体","楷体","等宽"][i];
+  $("tFont").appendChild(o);
+});
+txtEl.addEventListener("input", function(){
+  cfg.text = txtEl.value;
+  saveCfg(); schedulePreview(true);
+  if (cfg.autoPush && MODE === 1) scheduleAutoPush();
+});
+$("tFont").addEventListener("change", function(){ cfg.textFont = +$("tFont").value; saveCfg(); schedulePreview(false); });
+$("tSize").addEventListener("input", function(){ cfg.textSize = +$("tSize").value; saveCfg(); schedulePreview(true); });
+$("tSize").addEventListener("change", function(){ schedulePreview(false); });
+$("tColor").addEventListener("change", function(){ cfg.textColor = +$("tColor").value; saveCfg(); schedulePreview(false); });
+$("tBg").addEventListener("change", function(){ cfg.textBg = +$("tBg").value; saveCfg(); schedulePreview(false); });
+$("autoPush").addEventListener("change", function(){ cfg.autoPush = $("autoPush").checked; saveCfg(); });
+function scheduleAutoPush(){
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(function(){
+    if (MODE === 1) upload();
+  }, 3000);
+}
+
+/* ---------- 上传 ---------- */
+function setBar(frac){ barEl.style.display = "block"; fillEl.style.width = Math.round(frac*100) + "%"; }
+function upload(){
+  if (LOCAL_PREVIEW){
+    msg("本地预览模式：请连接 MoInk 热点后打开 http://192.168.4.1 上传，或使用导出的离线客户端", "err");
+    return;
+  }
+  if (MODE === 0 && !img){ msg("请先选择图片", "err"); return; }
+  if (MODE === 0 && !previewOK){ msg("预览还没跑通，请先确认预览画面正常再上传", "err"); return; }
+  goEl.disabled = true;
+  msg("正在合成画面…", "");
+  var payload;
+  try { payload = packFull(); }
+  catch(e){ msg("合成失败：" + e.message, "err"); goEl.disabled = false; return; }
+  var body = frameWithHeader(payload);
+  msg("正在上传 " + (body.length/1024).toFixed(0) + " KB…", "");
+  setBar(0);
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", api("/api/frame"));
+  xhr.upload.onprogress = function(e){
+    if (e.lengthComputable) setBar(e.loaded/e.total);
+  };
+  xhr.onload = function(){
+    barEl.style.display = "none";
+    if (xhr.status === 200){ msg("已上传，屏幕刷新中…", "ok"); }
+    else { msg("上传失败：" + xhr.responseText || xhr.status, "err"); }
+    goEl.disabled = (MODE === 0) ? !img : false;
+  };
+  xhr.onerror = function(){
+    barEl.style.display = "none";
+    msg("网络错误：请确认已连接设备热点", "err");
+    goEl.disabled = (MODE === 0) ? !img : false;
+  };
+  xhr.send(body);
+}
+goEl.addEventListener("click", upload);
+
+/* ---------- 设备信息 / 设置 ---------- */
+function refreshInfo(){
+  fetch(api("/api/info")).then(function(r){ return r.json(); }).then(function(j){
+    $("i-fw").textContent = j.fw || "—";
+    $("i-page").textContent = j.page || "—";
+    $("i-api").textContent = j.api != null ? j.api : "—";
+    $("i-panel").textContent = j.panel || "—";
+    $("i-ssid").textContent = j.ssid || "—";
+    $("i-heap").textContent = j.heap != null ? (j.heap/1024).toFixed(0) + " KB" : "—";
+    $("i-bat").textContent = (j.bat_mv > 0) ? (j.bat_mv/1000).toFixed(2) + " V" : "未连接";
+    $("i-clients").textContent = j.clients != null ? j.clients : "—";
+    var ok = (j.ssid != null);
+    $("conn").textContent = ok ? ("已连接 · " + j.ssid) : "未连接";
+    $("conn").classList.toggle("ok", ok);
+    if (j.panel) PANEL.name = j.panel;
+    if (j.panel === "A1") PANEL.id = 1; else PANEL.id = 0;
+  }).catch(function(){ $("conn").textContent = LOCAL_PREVIEW ? "本地预览（未连设备）" : "未连接"; });
+}
+function loadSettings(){
+  fetch(api("/api/settings")).then(function(r){ return r.json(); }).then(function(s){
+    $("sleepSel").value = String(s.sleep_s);
+    $("wakeSel").value = String(s.wake_s);
+    $("apSsid").value = s.ssid || "";
+    $("apPass").placeholder = s.pass_set ? "已设置（留空则不修改）" : "留空 = 开放";
+    $("panelSel").value = String(s.panel);
+    $("hflip").checked = !!s.hflip;
+  }).catch(function(){});
+}
+function postSettings(fields, done){
+  var body = Object.keys(fields).map(function(k){ return k + "=" + encodeURIComponent(fields[k]); }).join("&");
+  fetch(api("/api/settings"), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body
+  }).then(function(r){ if (r.ok) { done && done(); } else { msg("保存失败", "err"); } })
+    .catch(function(){ msg("网络错误", "err"); });
+}
+$("sleepSel").addEventListener("change", function(){ postSettings({ sleep_s: $("sleepSel").value }); });
+$("wakeSel").addEventListener("change", function(){ postSettings({ wake_s: $("wakeSel").value }); });
+$("saveAp").addEventListener("click", function(){
+  postSettings({ ssid: $("apSsid").value, pass: $("apPass").value }, function(){
+    msg("热点已更新，下次连接请用新名称", "ok");
+    $("apPass").value = "";
+    refreshInfo(); loadSettings();
+  });
+});
+$("savePanel").addEventListener("click", function(){
+  postSettings({ panel: $("panelSel").value, hflip: $("hflip").checked ? 1 : 0 }, function(){
+    msg("屏幕设置已保存", "ok");
+    PANEL.id = +$("panelSel").value;
+    refreshInfo();
+  });
+});
+
+/* ---------- 维护 ---------- */
+/* 固件 OTA 目标固定为设备 SoftAP 地址（设备无 STA 模式，IP 恒定）：
+   无论页面从哪里打开（设备内嵌 / 离线客户端 / 本地文件），OTA 都直达设备。 */
+var OTA_URL = "http://192.168.4.1/api/ota";
+function postFileTo(url, file, onDone, onErr){
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", url);
+  xhr.upload.onprogress = function(e){
+    if (e.lengthComputable){ $("otabar").style.display = "block"; $("fill2").style.width = Math.round(e.loaded/e.total*100) + "%"; }
+  };
+  xhr.onload = function(){
+    $("otabar").style.display = "none";
+    if (xhr.status === 200){ onDone && onDone(); } else { onErr && onErr(xhr.status); }
+  };
+  xhr.onerror = function(){ $("otabar").style.display = "none"; onErr && onErr("net"); };
+  xhr.send(file);
+}
+function postFile(path, file, onDone, onErr){
+  if (LOCAL_PREVIEW){ onErr && onErr("本地预览模式无法上传"); return; }
+  postFileTo(api(path), file, onDone, onErr);
+}
+$("fwGo").addEventListener("click", function(){
+  var f = $("fwFile").files[0];
+  if (!f){ msg("请先选择固件文件", "err"); return; }
+  $("otamsg").textContent = "上传固件中…（目标 http://192.168.4.1）";
+  /* 包一层 text/plain Blob：Content-Type 落在简单请求白名单内 → 不触发跨源预检，
+     对尚未启用通配匹配的旧固件（R1.0.5 之前）也能直接 OTA */
+  postFileTo(OTA_URL, new Blob([f], { type: "text/plain" }), function(){
+    $("otamsg").textContent = "固件升级成功，设备重启中…（约 45 秒内勿断电，然后刷新页面）";
+    msg("固件升级成功，设备重启中（45 秒内勿断电）", "ok");
+  }, function(e){ $("otamsg").textContent = "固件上传失败：" + e + "（net = 请确认已连接 MoInk 热点）"; });
+});
+$("webGo").addEventListener("click", function(){
+  var f = $("webFile").files[0];
+  if (!f){ msg("请先选择页面文件", "err"); return; }
+  $("otamsg").textContent = "上传页面中…";
+  postFile("/api/web", f, function(){
+    $("otamsg").textContent = "页面已更新，刷新浏览器即可";
+    msg("页面已更新，刷新浏览器即可", "ok");
+  }, function(e){ $("otamsg").textContent = "页面上传失败：" + e; });
+});
+$("webClear").addEventListener("click", function(){
+  if (!confirm("恢复内置页面？上传过的页面会被移除。")) return;
+  fetch(api("/api/web/clear"), { method: "POST" }).then(function(){
+    msg("已恢复内置页面，刷新浏览器即可", "ok");
+  }).catch(function(){ msg("操作失败", "err"); });
+});
+$("clearBtn").addEventListener("click", function(){
+  msg("清理残影中（约 40~60 秒）…", "");
+  fetch(api("/api/clear?cycles=2"), { method: "POST" }).then(function(){
+    msg("残影清理完成", "ok");
+  }).catch(function(){ msg("清理失败", "err"); });
+});
+$("factory").addEventListener("click", function(){
+  if (!confirm("恢复出厂设置？热点与全部设置会清除。")) return;
+  fetch(api("/api/factory"), { method: "POST" }).then(function(){
+    msg("已恢复出厂，设备重启中…", "ok");
+  });
+});
+$("saveOffline").addEventListener("click", function(){
+  var html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+  html = html.replace("</head>", "<script>window.MOINK_BASE=\"http://192.168.4.1\";<\/script></head>");
+  var blob = new Blob([html], { type: "text/html" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "墨印-离线客户端.html";
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 10000);
+});
+
+/* ---------- 启动 ---------- */
+loadCfg();
+applyMode(cfg.mode || DEF.mode);
+setMode(cfg.lastMode ? 1 : 0, true);
+txtEl.value = cfg.text || "";
+$("tFont").value = cfg.textFont || 0;
+$("tSize").value = cfg.textSize || 100;
+$("tColor").value = cfg.textColor || 0;
+$("tBg").value = cfg.textBg || 0;
+$("autoPush").checked = !!cfg.autoPush;
+CTRL.forEach(function(c){ setCtrlVal(c, cfg[c.key]); });
+refreshDefMarks();
+refreshInfo();
+loadSettings();
+</script>
+</body>
+</html>
