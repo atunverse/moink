@@ -91,7 +91,7 @@ def main():
         print()
         print("[OK] 刷机完成！设备即将重启。")
         print("     手机 Wi-Fi 连接热点 MoInk-XXXX（默认开放），自动弹出控制页；")
-        print("     或浏览器打开 http://192.168.4.1 。固件版本应显示 R1.0.0。")
+        print("     或浏览器打开 http://192.168.4.1 。固件版本应显示 R1.0.8。")
     else:
         print()
         print("[失败] esptool 退出码 %d。" % r.returncode)

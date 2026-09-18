@@ -1,8 +1,8 @@
 # 墨印 · MoInk — 版本更新记录（CHANGELOG）
 
-> **★ 当前基线版本：fw R1.0.6 + page R1.0.10**（2026-09-17 上机验证功能基本正常，已固化至
-> `moink/releases/baseline-fwR1.0.6_pageR1.0.10/`：整包/OTA 固件 + 页面 + 源码快照）。
-> 后续版本如需回退，以此目录为恢复点。
+> **★ 当前基线版本：fw R1.0.8 + page R1.0.22**（2026-09-18 确立，发布于 GitHub Releases，
+> tag `fw-R1.0.8_page-R1.0.22`：一键刷机包 / 固件整包 / OTA 包 / 创作页面）。
+> 历史基线 fw R1.0.6 + page R1.0.10 仍固化于 `moink/releases/baseline-fwR1.0.6_pageR1.0.10/`，仅作本地恢复点。
 
 > **维护规则**（2026-09-17 起）：
 > 1. 任何固件（fw）或页面（page）改动合入时，**必须在本文档新增条目**，条目格式保持统一；
@@ -25,6 +25,28 @@
 （仅涉及一侧时另一侧版本标注「不变」）
 
 ---
+
+## [基线发布] fw R1.0.8 + page R1.0.22 —— 刷机包增强 + GitHub Releases（2026-09-18）
+
+> 本版本确立为**当前基线版本**，发布于 GitHub Releases（tag `fw-R1.0.8_page-R1.0.22`）。
+
+### 新增
+- 刷机工具：`MoInk一键刷机.bat` 支持自动下载安装 Python——检测不到 python/py/python3 时，经确认后从 python.org 获取最新 Python 3 官方安装包静默安装（PrependPath，注册表重读 PATH 后自动重试；版本号解析失败回退固定版本 3.12.10）
+- 发布渠道：GitHub Releases 上线，资产含一键刷机包 zip / 固件整包 / OTA 包 / 创作页面
+
+### 修改
+- 一键刷机包换入 fw R1.0.8 整包/OTA 包与 page R1.0.22 页面，替换原 r1（R1.0.6 时代）内容
+- `flash_on_pc.py` 刷完提示、`使用说明.txt` 步骤与版本说明同步更新
+
+### 修复
+-（无）
+
+### 涉及文件
+- `flash_kit/`（bat / py / txt / bins / 页面）、`docs/CHANGELOG.md`、`README.md`
+
+### 影响范围与注意事项
+- 刷机包固件由 R1.0.6 时代整包升级为 fw R1.0.8（含全部批量修复）；页面为 page R1.0.22
+- bat 的自动装 Python 流程需联网；未授权/失败时保留原「手动安装」指引，不影响已装 Python 的机器
 
 ## [page R1.0.22 + fw R1.0.8] 2026-09-18
 

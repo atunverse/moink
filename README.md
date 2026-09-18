@@ -56,7 +56,7 @@ python tools/flash_moink.py
 # 3. 手机连接设备热点 MoInk-XXXX，浏览器自动弹出创作页
 ```
 
-也可以免编译直接使用 `flash_kit/` 目录里的一键刷机包（含预编译固件）。
+也可以免编译直接使用 `flash_kit/` 目录里的一键刷机包（含预编译固件；没装 Python 会引导自动安装），或到 [GitHub Releases](https://github.com/atunverse/moink/releases) 下载刷机包。
 
 ## 📖 使用方法
 
