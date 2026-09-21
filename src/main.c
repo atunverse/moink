@@ -190,9 +190,10 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
     char buf[256];
 
     snprintf(buf, sizeof(buf),
-        "{\"panel\":%u,\"hflip\":%u,\"sleep_s\":%lu,\"wake_s\":%lu,"
+        "{\"panel\":%u,\"hflip\":%u,\"a11_var\":%u,\"sleep_s\":%lu,\"wake_s\":%lu,"
         "\"ssid\":\"%s\",\"pass_set\":%s}",
-        s->panel, s->hflip, (unsigned long)s->sleep_s, (unsigned long)s->wake_s,
+        s->panel, s->hflip, s->a11_var,
+        (unsigned long)s->sleep_s, (unsigned long)s->wake_s,
         s->ap_ssid, s->ap_pass[0] ? "true" : "false");
 
     httpd_resp_set_type(req, "application/json");
@@ -216,6 +217,10 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     if (kv_get(body, "hflip", v, sizeof(v))) {
         settings_set_hflip((uint8_t)atoi(v));
         hflip_changed = true;
+    }
+    if (kv_get(body, "a11_var", v, sizeof(v))) {
+        settings_set_a11_var((uint8_t)atoi(v));
+        epd_set_a11_variant(settings_get()->a11_var);
     }
     if (kv_get(body, "sleep_s", v, sizeof(v))) {
         settings_set_sleep((uint32_t)atoi(v));
@@ -402,6 +407,7 @@ void app_main(void)
         ESP_LOGE(TAG, "EPD init failed");
     }
     epd_set_panel((epd_panel_t)settings_get()->panel);
+    epd_set_a11_variant(settings_get()->a11_var);
     epd_set_hflip(settings_get()->hflip != 0);
 
     frame_init();

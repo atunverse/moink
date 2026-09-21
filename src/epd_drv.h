@@ -27,6 +27,7 @@
 typedef enum {
     EPD_PANEL_A0 = 0,
     EPD_PANEL_A1 = 1,      /* 原 A1L：线性整窗写入，未上机验证 */
+    EPD_PANEL_A11 = 2,     /* A1.1 测试画像：A1 线性写入 + 可切换诊断变体 */
     EPD_PANEL_COUNT
 } epd_panel_t;
 
@@ -70,6 +71,17 @@ int epd_init(void);
 /* 选择活动屏画像。成功返回 0。 */
 int epd_set_panel(epd_panel_t panel);
 epd_panel_t epd_get_panel(void);
+
+/*
+ * A1.1 测试画像的诊断变体（1..4）：
+ *   1 = 对照（与 A1 序列完全一致）
+ *   2 = 级联配置变体：0x84 0x01 -> 0x00
+ *   3 = 多扫一行：TRES 高度 +1（553），整窗与写入行数同步扩展
+ *   4 = 接缝重写：整帧写完后，把中间接缝行（H/2-2..H/2+2）重叠重写一遍
+ * 非法值回落到 1。变体只影响 A1.1 画像，A0/A1 行为不变。
+ */
+void epd_set_a11_variant(uint8_t v);
+uint8_t epd_get_a11_variant(void);
 
 /* 当前画像（永不为 NULL）。 */
 const epd_profile_t *epd_profile(void);

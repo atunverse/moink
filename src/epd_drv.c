@@ -38,14 +38,16 @@ static const char *TAG = "epd";
 #define MAX_ROW_BYTES (EPD_MAX_W / 4)      /* 192 */
 
 const epd_profile_t EPD_PROFILES[EPD_PANEL_COUNT] = {
-    [EPD_PANEL_A0] = { EPD_A0_W, EPD_A0_H, EPD_A0_W / 4 * EPD_A0_H, -1, 0 },
-    [EPD_PANEL_A1] = { EPD_A1_W, EPD_A1_H, EPD_A1_W / 4 * EPD_A1_H,  0, 1 },
+    [EPD_PANEL_A0]  = { EPD_A0_W, EPD_A0_H, EPD_A0_W / 4 * EPD_A0_H, -1, 0 },
+    [EPD_PANEL_A1]  = { EPD_A1_W, EPD_A1_H, EPD_A1_W / 4 * EPD_A1_H,  0, 1 },
+    [EPD_PANEL_A11] = { EPD_A1_W, EPD_A1_H, EPD_A1_W / 4 * EPD_A1_H,  0, 1 },
 };
 
 static const epd_profile_t *s_prof = &EPD_PROFILES[EPD_PANEL_A0];
 static epd_panel_t s_panel = EPD_PANEL_A0;
 static int8_t s_lower_y_base = -1;
 static bool s_hflip = false;
+static uint8_t s_a11_var = 1;    /* A1.1 诊断变体，见 epd_drv.h */
 static spi_device_handle_t s_spi;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
@@ -69,10 +71,33 @@ int epd_set_panel(epd_panel_t panel)
 const char *epd_panel_name(epd_panel_t panel)
 {
     switch (panel) {
-    case EPD_PANEL_A0: return "A0";
-    case EPD_PANEL_A1: return "A1";
-    default:           return "?";
+    case EPD_PANEL_A0:  return "A0";
+    case EPD_PANEL_A1:  return "A1";
+    case EPD_PANEL_A11: return "A1.1";
+    default:            return "?";
     }
+}
+
+/* ---- A1.1 诊断变体 ---- */
+
+void epd_set_a11_variant(uint8_t v)
+{
+    if (v < 1 || v > 4) v = 1;
+    s_a11_var = v;
+    ESP_LOGI(TAG, "A1.1 diagnostic variant = %u", (unsigned)v);
+}
+
+uint8_t epd_get_a11_variant(void) { return s_a11_var; }
+
+/*
+ * A1.1 变体 3 的有效扫描行数：TRES 多声明一行（553）。
+ * 若 A1.1 批次在上下两半级联的接缝处多了一条栅极，声明 552 时
+ * 这条栅极不会被任何数据行命中，刷新波形边界就在它身上留下深色线。
+ */
+static int a11_h_active(void)
+{
+    return (s_panel == EPD_PANEL_A11 && s_a11_var == 3) ? s_prof->h + 1
+                                                        : s_prof->h;
 }
 
 epd_panel_t epd_get_panel(void) { return s_panel; }
@@ -184,14 +209,19 @@ static void epd_panel_init_a1(void)
     EPD_C1(0x30, 0x08);                 /* PLL */
     EPD_C1(0x50, 0x3F);                 /* VCOM */
 
+    int h_active = a11_h_active();
     uint8_t tres[4] = { (uint8_t)(s_prof->w >> 8), (uint8_t)(s_prof->w & 0xFF),
-                        (uint8_t)(s_prof->h >> 8), (uint8_t)(s_prof->h & 0xFF) };
+                        (uint8_t)(h_active >> 8), (uint8_t)(h_active & 0xFF) };
     epd_cmd(0x61, tres, 4);             /* TRES */
 
     EPD_C4(0x65, 0x10, 0x00, 0x20, 0x00);
     EPD_C1(0xE3, 0x2F);
-    EPD_C1(0x84, 0x01);
-    epd_set_window(s_prof->w, 0, s_prof->h - 1);
+    if (s_panel == EPD_PANEL_A11 && s_a11_var == 2) {
+        EPD_C1(0x84, 0x00);             /* A1.1 变体 2：级联配置改写 */
+    } else {
+        EPD_C1(0x84, 0x01);
+    }
+    epd_set_window(s_prof->w, 0, h_active - 1);
     epd_cmd(0x04, NULL, 0);             /* 上电 */
     epd_wait_busy(BUSY_TIMEOUT_LONG_MS);
 }
@@ -242,21 +272,36 @@ static void row_mirror(uint8_t *dst, const uint8_t *src, int row_bytes, bool fli
  * A1：一个 0x83 整窗，然后整块缓冲走单次 0x10。
  * 行自顶向下；每行保持 180° 缓冲契约（物理行 j <- 逻辑行 j），
  * 与 A0 一样水平镜像，除非用户开了水平翻转覆盖。
+ * A1.1 变体 3 多扫一行（h_active = H+1）：多出的最后一行复制前一行的数据，
+ * 保证多声明的那条栅极也被显式驱动。变体 4 在整帧写完后把接缝行重叠重写。
  */
 static int epd_write_frame_linear(const uint8_t *buf)
 {
     static uint8_t row[MAX_ROW_BYTES];
     const int H = s_prof->h, row_bytes = s_prof->w / 4;
+    const int h_active = a11_h_active();
 
-    epd_set_window(s_prof->w, 0, H - 1);
+    epd_set_window(s_prof->w, 0, h_active - 1);
     epd_cmd(0x10, NULL, 0);                     /* 写 RAM */
 
     gpio_set_level(EPD_PIN_DC, 1);
     gpio_set_level(EPD_PIN_CS, 0);
     esp_err_t err = ESP_OK;
-    for (int j = 0; j < H && err == ESP_OK; j++) {
-        row_mirror(row, buf + (size_t)(H - 1 - j) * row_bytes, row_bytes, s_hflip);
+    for (int j = 0; j < h_active && err == ESP_OK; j++) {
+        int src_row = H - 1 - j;
+        if (src_row < 0) src_row = 0;           /* 变体 3 多出的行复制最底行 */
+        row_mirror(row, buf + (size_t)src_row * row_bytes, row_bytes, s_hflip);
         err = spi_tx(row, row_bytes);
+    }
+    if (err == ESP_OK && s_panel == EPD_PANEL_A11 && s_a11_var == 4) {
+        /* A1.1 变体 4：上下两半级联接缝（H/2 附近）重叠重写一遍。 */
+        const int ys = H / 2 - 2, ye = H / 2 + 2;
+        epd_set_window(s_prof->w, ys, ye);
+        epd_cmd(0x10, NULL, 0);
+        for (int y = ys; y <= ye && err == ESP_OK; y++) {
+            row_mirror(row, buf + (size_t)(H - 1 - y) * row_bytes, row_bytes, s_hflip);
+            err = spi_tx(row, row_bytes);
+        }
     }
     gpio_set_level(EPD_PIN_CS, 1);
     if (err != ESP_OK) {
@@ -427,7 +472,7 @@ static int epd_cycle(const uint8_t *frame)
         if (epd_write_frame_2bpp(frame) != 0) continue;
         ESP_LOGI(TAG, "frame written in %lld ms", (long long)(now_ms() - t0));
 
-        epd_set_window(s_prof->w, 0, s_prof->h - 1);
+        epd_set_window(s_prof->w, 0, a11_h_active() - 1);
 
         t0 = now_ms();
         if (epd_refresh() != 0) continue;
@@ -462,11 +507,12 @@ int epd_clear_cycles(int cycles)
         if (epd_panel_init() != 0) return -1;
 
         if (s_prof->linear) {
-            epd_set_window(s_prof->w, 0, H - 1);
+            int h_active = a11_h_active();
+            epd_set_window(s_prof->w, 0, h_active - 1);
             epd_cmd(0x10, NULL, 0);
             gpio_set_level(EPD_PIN_DC, 1);
             gpio_set_level(EPD_PIN_CS, 0);
-            for (int j = 0; j < H; j++) spi_tx(row, row_bytes);
+            for (int j = 0; j < h_active; j++) spi_tx(row, row_bytes);
             gpio_set_level(EPD_PIN_CS, 1);
         } else {
             uint8_t z = 0x00;

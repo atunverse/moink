@@ -17,6 +17,8 @@ releases/
 backups/
 page/page-R1.0.*.html
 !page/page-R1.0.22.html
+!page/page-R1.0.23.html
+tools/_refdrv/
 
 # ---- 内部过程文档（保留在磁盘，不入库）----
 docs/重构方案与架构设计.md

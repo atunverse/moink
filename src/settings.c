@@ -13,6 +13,7 @@ static const char *TAG = "settings";
 static const moink_settings_t DEFAULTS = {
     .panel   = EPD_PANEL_A0,
     .hflip   = 0,
+    .a11_var = 1,
     .sleep_s = SETT_SLEEP_3MIN,
     .wake_s  = SETT_WAKE_OFF,
     .ap_ssid = "",
@@ -58,6 +59,7 @@ void settings_init(void)
 
     read_u8("panel",   &s_cfg.panel);
     read_u8("hflip",   &s_cfg.hflip);
+    read_u8("a11_var", &s_cfg.a11_var);
     read_u32("sleep_s", &s_cfg.sleep_s);
     read_u32("wake_s",  &s_cfg.wake_s);
     read_str("ap_ssid", s_cfg.ap_ssid, SETT_SSID_MAX);
@@ -110,6 +112,15 @@ esp_err_t settings_set_hflip(uint8_t v)
     return ESP_OK;
 }
 
+esp_err_t settings_set_a11_var(uint8_t v)
+{
+    if (v < 1 || v > 4) v = 1;
+    s_cfg.a11_var = v;
+    store_u8("a11_var", v);
+    settings_commit();
+    return ESP_OK;
+}
+
 esp_err_t settings_set_sleep(uint32_t v)
 {
     /* 仅接受档位值（或任意 >0 秒，上限 86400）。 */
@@ -148,7 +159,7 @@ void settings_factory_reset(void)
     /* 只清「设置类」键；web_len/web_crc/page_ver（页面热更标记）保留——
        页面热更是系统资产而非用户数据，恢复出厂后无需重新上传页面
        （旧实现 nvs_erase_all 连页面标记一起擦，导致回退内嵌页）。 */
-    static const char *KEYS[] = { "panel", "hflip", "sleep_s", "wake_s", "ap_ssid", "ap_pass" };
+    static const char *KEYS[] = { "panel", "hflip", "a11_var", "sleep_s", "wake_s", "ap_ssid", "ap_pass" };
     if (s_ok) {
         for (int i = 0; i < (int)(sizeof(KEYS) / sizeof(KEYS[0])); i++)
             nvs_erase_key(s_nvs, KEYS[i]);
