@@ -23,6 +23,7 @@ docs/重构方案与架构设计.md
 docs/代码审查报告-*.html
 docs/会话摘要-*.md
 docs/未实施项说明-*.md
+docs/问题跟踪.md
 
 # ---- 临时/调试产物 ----
 tools/_*
