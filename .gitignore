@@ -18,6 +18,7 @@ backups/
 page/page-R1.0.*.html
 !page/page-R1.0.22.html
 !page/page-R1.0.23.html
+!page/page-R1.0.24.html
 tools/_refdrv/
 
 # ---- 内部过程文档（保留在磁盘，不入库）----

@@ -15,6 +15,10 @@ void netif_ap_init(void);
 /* 重新应用设置（SSID / 密码变更后调用），幂等。 */
 void netif_ap_apply(void);
 
+/* 按当前设置的功率档位调整发射功率（高 18dBm / 中 10dBm / 低 8.5dBm）。
+ * 启动时与页面改档后调用，幂等。 */
+void netif_ap_apply_tx_power(void);
+
 /* 当前已连接 STA 数（供 /api/info 展示）。 */
 int netif_ap_client_count(void);
 

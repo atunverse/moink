@@ -78,30 +78,60 @@ static esp_err_t ota_handler(httpd_req_t *req)
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
     if (!part)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no ota slot");
+    if (total > part->size)
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "image too large");
 
     ESP_LOGI(TAG, "OTA start: %u bytes -> %s", (unsigned)total, part->label);
 
-    esp_ota_handle_t h = 0;
-    if (esp_ota_begin(part, total, &h) != ESP_OK)
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota begin failed");
-
+    /* FB-004（R1.0.10）：流式擦除。原 esp_ota_begin(part, total) 同步整片预擦
+       固件分区（930KB 约 5~15s），期间无任何数据流动，慢客户端容易超时。
+       改用与 web_handler 相同且已上机验证的「逐扇区首次写入前先擦」模式：
+       recv 块按扇区边界拆分，先擦后写。回滚机制不受影响——启动切换仍由
+       esp_ota_set_boot_partition 写 otadata + confirm_task 取消回滚驱动；
+       中途失败只留下脏目标分区，boot 分区未变，原固件照常运行。 */
     char *buf = s_buf;
-    size_t received = 0;
+    size_t written = 0;
     bool ok = true;
-    while (received < total) {
+
+    while (written < total) {
         int n = httpd_req_recv(req, buf, WEB_CHUNK);
         if (n <= 0) { ok = false; break; }
         power_activity();
-        if (esp_ota_write(h, buf, (size_t)n) != ESP_OK) { ok = false; break; }
-        received += (size_t)n;
+
+        if (written == 0 && (uint8_t)buf[0] != 0xE9) {
+            ok = false; break;        /* 非 ESP 镜像头，立即拒绝 */
+        }
+
+        char *p = buf;
+        while (n > 0) {
+            if ((written & 0xFFF) == 0) {           /* 到达扇区起点：先擦 */
+                uint32_t elen = 0x1000;
+                if (written + elen > part->size) elen = part->size - written;
+                if (esp_partition_erase_range(part, written, elen) != ESP_OK) { ok = false; break; }
+            }
+            uint32_t room = 0x1000 - (written & 0xFFF);   /* 距本扇区尾 */
+            uint32_t w = ((uint32_t)n < room) ? (uint32_t)n : room;
+            if (esp_partition_write(part, written, p, w) != ESP_OK) { ok = false; break; }
+            written += w; p += w; n -= (int)w;
+        }
+        if (!ok) break;
     }
 
-    if (!ok) {
-        esp_ota_abort(h);
+    if (!ok || written != total)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota write failed");
-    }
-    if (esp_ota_end(h) != ESP_OK)
+
+    /* 最小镜像校验（替代 esp_ota_end 的关键项）：
+       0xE9 魔数 + 芯片型号（扩展头 0x0C 处 chip_id，ESP32-C3=0x0005）+
+       app 描述符 magic 0xABCD5432（偏移 0x20）。
+       更深层的段校验交给回滚兜底：新固件 45s 内不确认则自动回滚旧版。 */
+    uint8_t hdr[64];
+    if (esp_partition_read(part, 0, hdr, sizeof(hdr)) != ESP_OK || hdr[0] != 0xE9)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota verify failed");
+    uint16_t chip_id = (uint16_t)(hdr[0x0C] | (hdr[0x0D] << 8));
+    if (chip_id != 0x0005 ||     /* ESP32-C3 */
+        hdr[0x20] != 0x32 || hdr[0x21] != 0x54 || hdr[0x22] != 0xCD || hdr[0x23] != 0xAB)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota verify failed");
+
     if (esp_ota_set_boot_partition(part) != ESP_OK)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "set boot failed");
 

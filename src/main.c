@@ -190,9 +190,9 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
     char buf[256];
 
     snprintf(buf, sizeof(buf),
-        "{\"panel\":%u,\"hflip\":%u,\"a11_var\":%u,\"sleep_s\":%lu,\"wake_s\":%lu,"
+        "{\"panel\":%u,\"hflip\":%u,\"a11_var\":%u,\"wifi_pwr\":%u,\"sleep_s\":%lu,\"wake_s\":%lu,"
         "\"ssid\":\"%s\",\"pass_set\":%s}",
-        s->panel, s->hflip, s->a11_var,
+        s->panel, s->hflip, s->a11_var, s->wifi_pwr,
         (unsigned long)s->sleep_s, (unsigned long)s->wake_s,
         s->ap_ssid, s->ap_pass[0] ? "true" : "false");
 
@@ -221,6 +221,10 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     if (kv_get(body, "a11_var", v, sizeof(v))) {
         settings_set_a11_var((uint8_t)atoi(v));
         epd_set_a11_variant(settings_get()->a11_var);
+    }
+    if (kv_get(body, "wifi_pwr", v, sizeof(v))) {
+        settings_set_wifi_pwr((uint8_t)atoi(v));
+        netif_ap_apply_tx_power();
     }
     if (kv_get(body, "sleep_s", v, sizeof(v))) {
         settings_set_sleep((uint32_t)atoi(v));

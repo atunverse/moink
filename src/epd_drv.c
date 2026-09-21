@@ -52,6 +52,31 @@ static spi_device_handle_t s_spi;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
+/* A1.1 变体 6 的降速时钟（300kHz，约等于参考位绷路径的信号条件）。 */
+#define A11_V6_SPI_HZ  300000u
+
+static uint32_t s_spi_hz = SPI_HZ;
+
+/* 运行时重配 SPI 时钟（变体 6）。仅在本驱动独占总线的前提下安全。 */
+static int spi_reconfigure_clock(uint32_t hz)
+{
+    if (hz == s_spi_hz) return 0;
+    if (spi_bus_remove_device(s_spi) != ESP_OK) return -1;
+    spi_device_interface_config_t dev = {
+        .clock_speed_hz = (int)hz,
+        .mode = 0,
+        .spics_io_num = -1,          /* CS 手动驱动 */
+        .queue_size = 1,
+    };
+    if (spi_bus_add_device(SPI2_HOST, &dev, &s_spi) != ESP_OK) {
+        ESP_LOGE(TAG, "spi reconfig to %u Hz failed", (unsigned)hz);
+        return -1;
+    }
+    s_spi_hz = hz;
+    ESP_LOGI(TAG, "SPI clock -> %u Hz", (unsigned)hz);
+    return 0;
+}
+
 /* ---- profile ---- */
 
 int epd_set_panel(epd_panel_t panel)
@@ -82,7 +107,7 @@ const char *epd_panel_name(epd_panel_t panel)
 
 void epd_set_a11_variant(uint8_t v)
 {
-    if (v < 1 || v > 4) v = 1;
+    if (v < 1 || v > 6) v = 1;
     s_a11_var = v;
     ESP_LOGI(TAG, "A1.1 diagnostic variant = %u", (unsigned)v);
 }
@@ -280,18 +305,22 @@ static int epd_write_frame_linear(const uint8_t *buf)
     static uint8_t row[MAX_ROW_BYTES];
     const int H = s_prof->h, row_bytes = s_prof->w / 4;
     const int h_active = a11_h_active();
+    /* 变体 5：每行独立 CS 包络（0x10 数据相位保持打开，逐行重新同步控制器）。 */
+    const bool per_row_cs = (s_panel == EPD_PANEL_A11 && s_a11_var == 5);
 
     epd_set_window(s_prof->w, 0, h_active - 1);
     epd_cmd(0x10, NULL, 0);                     /* 写 RAM */
 
     gpio_set_level(EPD_PIN_DC, 1);
-    gpio_set_level(EPD_PIN_CS, 0);
+    if (!per_row_cs) gpio_set_level(EPD_PIN_CS, 0);
     esp_err_t err = ESP_OK;
     for (int j = 0; j < h_active && err == ESP_OK; j++) {
         int src_row = H - 1 - j;
         if (src_row < 0) src_row = 0;           /* 变体 3 多出的行复制最底行 */
         row_mirror(row, buf + (size_t)src_row * row_bytes, row_bytes, s_hflip);
+        if (per_row_cs) gpio_set_level(EPD_PIN_CS, 0);
         err = spi_tx(row, row_bytes);
+        if (per_row_cs) gpio_set_level(EPD_PIN_CS, 1);
     }
     if (err == ESP_OK && s_panel == EPD_PANEL_A11 && s_a11_var == 4) {
         /* A1.1 变体 4：上下两半级联接缝（H/2 附近）重叠重写一遍。 */
@@ -461,6 +490,13 @@ int epd_init(void)
  */
 static int epd_cycle(const uint8_t *frame)
 {
+    /* 变体 6：低速 SPI（300kHz），隔离「时钟速率」假设；其他变体回到标准时钟。 */
+    if (s_panel == EPD_PANEL_A11 && s_a11_var == 6) {
+        if (spi_reconfigure_clock(A11_V6_SPI_HZ) != 0) return -1;
+    } else if (s_spi_hz != SPI_HZ) {
+        spi_reconfigure_clock(SPI_HZ);
+    }
+
     for (int attempt = 0; attempt < 3; attempt++) {
         int64_t t0;
         ESP_LOGI(TAG, "display attempt %d/3 (BUSY=%d)", attempt + 1,

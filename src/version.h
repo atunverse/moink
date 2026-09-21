@@ -10,7 +10,7 @@
  * 升级判据：改动是否涉及固件接口（api 或路由）——没动就只发页面，动了就固件 + 页面同步。
  */
 #define MOINK_API_VERSION   1
-#define MOINK_FW_VERSION    "R1.0.9"
-#define MOINK_PAGE_VERSION  "R1.0.23"
+#define MOINK_FW_VERSION    "R1.0.10"
+#define MOINK_PAGE_VERSION  "R1.0.24"
 
 #endif /* MOINK_VERSION_H */
