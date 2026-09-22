@@ -11,6 +11,6 @@
  */
 #define MOINK_API_VERSION   1
 #define MOINK_FW_VERSION    "R1.0.11"
-#define MOINK_PAGE_VERSION  "R1.0.25"
+#define MOINK_PAGE_VERSION  "R1.0.26"
 
 #endif /* MOINK_VERSION_H */

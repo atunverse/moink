@@ -36,6 +36,10 @@ tools/_*
 .DS_Store
 Thumbs.db
 
+# ---- 标定支线与样张（本地实验，不入库；见 docs/校准方案-FB-002.md）----
+page-calib/
+samples/
+
 # ---- Python ----
 __pycache__/
 *.pyc

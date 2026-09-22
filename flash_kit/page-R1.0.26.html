@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="moink-page-version" content="R1.0.22">
+<meta name="moink-page-version" content="R1.0.26">
 <title>墨印 · MoInk</title>
 <style>
 /* ===== Cropper.js v1.6.2 | MIT | https://github.com/fengyuanchen/cropperjs ===== */
@@ -237,7 +237,7 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
           <option value="none">无抖动</option>
         </select>
         <label>色域</label>
-        <select id="space"><option value="linear">线性光</option><option value="srgb">sRGB</option></select>
+        <select id="space"><option value="std">标准</option><option value="linear">线性光</option><option value="srgb">sRGB</option></select>
         <label><input type="checkbox" id="levels" checked> 自动色阶</label>
       </div>
       <div class="hint" id="dmodeHint" style="margin:2px 0 6px"></div>
@@ -354,6 +354,15 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
       <label>密码</label>
       <input type="password" id="apPass" maxlength="64" placeholder="留空 = 开放">
     </div>
+    <div class="row">
+      <label>WiFi 功率</label>
+      <select id="wifiPwrSel">
+        <option value="0">高（18dBm，默认）</option>
+        <option value="1">中（10dBm）</option>
+        <option value="2">低（8.5dBm）</option>
+      </select>
+      <span class="hint" style="margin:0">连不上/传输不稳时再调低</span>
+    </div>
     <div class="row"><button class="mini" id="saveAp">保存热点设置</button></div>
     </details>
 
@@ -361,8 +370,22 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
       <summary>屏幕设置</summary>
     <div class="row">
       <label>屏幕</label>
-      <select id="panelSel"><option value="0">A0</option><option value="1">A1</option></select>
+      <select id="panelSel"><option value="0">A0</option><option value="1">A1</option><option value="2">A1.1（测试）</option></select>
     </div>
+    <div class="row" id="a11Row" style="display:none">
+      <label>测试变体</label>
+      <select id="a11Sel">
+        <option value="1">V1 对照（同 A1）</option>
+        <option value="2">V2 级联配置改写</option>
+        <option value="3">V3 多扫一行（553）</option>
+        <option value="4">V4 接缝行重叠重写</option>
+        <option value="5">V5 分块写（每行独立 CS）</option>
+        <option value="6">V6 低速（300kHz）</option>
+        <option value="7">V7 800×600 扫描（中部48行填白）</option>
+        <option value="8">V8 800×600 扫描（内容拉伸600行）</option>
+      </select>
+    </div>
+    <div class="hint" id="a11Hint" style="display:none">A1.1 屏（编号 A1 但刷新分两半、中间有黑线的批次）专用测试驱动（A1 屏白线已在固件 R1.0.11 默认修复，无需变体）。V1–V6：黑白对比图逐个变体测中线变化；V7/V8：分辨率诊断（TRES 改原生 800×600，V8 已在 A1 屏真机验证有效）。每换一个变体保存后传一张图并拍照记录。</div>
     <div class="row"><label><input type="checkbox" id="hflip"> 左右镜像</label></div>
     <div class="row"><button class="mini" id="savePanel">保存</button></div>
     </details>
@@ -431,6 +454,28 @@ function l2s(v){ v=clamp(v,0,255)/255; return 255*(v<=0.0031308?v*12.92:1.055*Ma
 var S2L_LUT=(function(){ var t=new Float64Array(256); for(var i=0;i<256;i++)t[i]=s2l(i); return t; })();
 var PAL_LIN = PAL.map(function(p){ return p.map(s2l); });
 
+/* ==================================================================
+   std 标准档（FB-002 Stage A 定稿，基线 B2，2026-09-22）
+   分通道 decode γ=1.75 + 黄 (255,230,0) / 红 (220,0,0) 目标色。
+   参数为真机定稿值，写死不可调（samples/FB-002/校准表-StageA-final.md）；
+   check_algo B2：quantize 的 std 注入块剥离后须与 M7 冻结版逐字一致。
+   ================================================================== */
+var STD_LUT = (function(){
+  var lut = [];
+  for (var c = 0; c < 3; c++){
+    var t = new Float64Array(256);
+    for (var i = 0; i < 256; i++) t[i] = 255 * Math.pow(i / 255, 1.75);
+    lut.push(t);
+  }
+  return lut;
+})();
+var STD_PAL = [
+  [0, 0, 0],
+  [255, 255, 255],
+  [255, STD_LUT[1][230], 0],
+  [STD_LUT[0][220], 0, 0]
+];
+
 var RAMPS = {
   sunset: [[0,[0,0,0]],[0.10,[26,6,4]],[0.26,[92,18,12]],[0.42,[168,40,16]],
            [0.56,[214,86,18]],[0.70,[236,140,26]],[0.84,[248,200,60]],
@@ -467,7 +512,7 @@ var DEF = {
   warmBoost: 0.60, coolPull: 0.25, coolCap: 60, coolDesat: 0.25,
   warmPull: 0.12, warmPullCap: 18,
   autoLevels: 1, sharpen: 0.30,
-  dither: "fs", ditherStrength: 0.85, space: "linear",
+  dither: "fs", ditherStrength: 0.85, space: "std",
   lastMode: 0, text: "", textFont: 0, textSize: 100,
   textColor: 0, textBg: 0,
   cropRot: 0, padOn: false, padT: 0, padR: 0, padB: 0, padL: 0,
@@ -690,7 +735,14 @@ function quantize(mapped, w, h, cfg){
   var mode = cfg.dither, strength = cfg.ditherStrength;
   var lin = (cfg.space === "linear");
   var pal = lin ? PAL_LIN : PAL;
-  if (lin){
+  var CDEC = null;
+  if (cfg.space === "std"){ CDEC = STD_LUT; pal = STD_PAL; }
+  if (CDEC){
+    for (i = 0; i < n*3; i++){
+      var v = clamp(flat[i], 0, 255);
+      flat[i] = CDEC[i % 3][(v + 0.5) | 0];
+    }
+  } else if (lin){
     for (i = 0; i < n*3; i++){
       var v = clamp(flat[i], 0, 255);
       flat[i] = S2L_LUT[(v + 0.5) | 0];
@@ -870,7 +922,10 @@ function snapIdx(r, g, b){
   }
   return best;
 }
-var cropCache = { sig:"", cv:null };
+/* FB-007：cropCache 双槽 LRU。预览与输出两种画布尺寸交替时单槽会互相冲掉，
+   双槽让两路签名同时保活（t = 最近使用序号，淘汰最久未用的一槽）。 */
+var cropCache = [ { sig:"", cv:null, t:0 }, { sig:"", cv:null, t:0 } ];
+var cropCacheTick = 0;
 function cropSig(cw, ch){
   if (!cr || !crReady) return "";
   var d;
@@ -881,10 +936,24 @@ function cropSig(cw, ch){
 }
 function getCropCanvas(cw, ch){
   var sig = cropSig(cw, ch);
-  if (sig && sig === cropCache.sig && cropCache.cv) return cropCache.cv;
+  if (sig){
+    for (var i = 0; i < cropCache.length; i++){
+      if (cropCache[i].sig === sig && cropCache[i].cv){
+        cropCache[i].t = ++cropCacheTick;
+        return cropCache[i].cv;
+      }
+    }
+  }
   var cv = cr.getCroppedCanvas({ width:cw, height:ch, fillColor:"#fff",
                                  imageSmoothingQuality:"high" });
-  if (sig){ cropCache.sig = sig; cropCache.cv = cv; }
+  if (sig){
+    var slot;
+    if (!cropCache[0].sig)      slot = 0;
+    else if (!cropCache[1].sig) slot = 1;
+    else slot = (cropCache[0].t <= cropCache[1].t) ? 0 : 1;
+    cropCache[slot].sig = sig; cropCache[slot].cv = cv;
+    cropCache[slot].t = ++cropCacheTick;
+  }
   return cv;
 }
 /* 底图（L0+L1，无文字）：拍立得 = 白底+留白+风格化图像层；便签 = 纯底色。
@@ -1052,7 +1121,16 @@ function msg(s, cls){ msgEl.textContent = s; msgEl.className = cls || ""; }
 
 var LS_KEY = "moink.cfg4";
 var LS_KEY_OLD = "einkframe.cfg4";
-function saveCfg(){ try { localStorage.setItem(LS_KEY, JSON.stringify(cfg)); } catch(e){} }
+/* FB-005：saveCfg 节流（前沿 + 300ms 拖尾）。滑杆拖动等高频调用不再逐次写
+   localStorage，最后一次改动保证落盘；调用点保持原样无需改动。 */
+var _saveLast = 0, _saveTmr = null;
+function _saveNow(){ try { localStorage.setItem(LS_KEY, JSON.stringify(cfg)); _saveLast = Date.now(); } catch(e){} }
+function saveCfg(){
+  if (_saveTmr){ clearTimeout(_saveTmr); _saveTmr = null; }
+  var gap = Date.now() - _saveLast;
+  if (gap >= 300){ _saveNow(); }
+  else { _saveTmr = setTimeout(function(){ _saveTmr = null; _saveNow(); }, 300 - gap); }
+}
 function normObjs(a){
   if (!Array.isArray(a)) return [];
   return a.map(function(o){
@@ -1166,7 +1244,9 @@ function rotSnap(a){
   if (m <= 3)  return a - m;
   return a;
 }
-function cropInvalid(){ cropCache.sig = ""; cropCache.cv = null; }
+function cropInvalid(){
+  for (var i = 0; i < cropCache.length; i++){ cropCache[i].sig = ""; cropCache[i].cv = null; }
+}
 function initCrop(){
   if (!img || cr || MODE !== 0) return;
   cropInvalid();
@@ -1743,7 +1823,7 @@ function refreshInfo(){
     $("conn").textContent = ok ? ("已连接 · " + j.ssid) : "未连接";
     $("conn").classList.toggle("ok", ok);
     if (j.panel) PANEL.name = j.panel;
-    if (j.panel === "A1") PANEL.id = 1; else PANEL.id = 0;
+    if (j.panel === "A1") PANEL.id = 1; else if (j.panel === "A1.1") PANEL.id = 2; else PANEL.id = 0;
   }).catch(function(){ $("conn").textContent = LOCAL_PREVIEW ? "本地预览（未连设备）" : "未连接"; });
 }
 function loadSettings(){
@@ -1753,6 +1833,9 @@ function loadSettings(){
     $("apSsid").value = s.ssid || "";
     $("apPass").placeholder = s.pass_set ? "已设置（留空则不修改）" : "留空 = 开放";
     $("panelSel").value = String(s.panel);
+    $("a11Sel").value = String(s.a11_var || 1);
+    $("wifiPwrSel").value = String(s.wifi_pwr || 0);
+    syncA11Rows();
     $("hflip").checked = !!s.hflip;
   }).catch(function(){});
 }
@@ -1774,14 +1857,23 @@ $("saveSleep").addEventListener("click", function(){
   });
 });
 $("saveAp").addEventListener("click", function(){
-  postSettings({ ssid: $("apSsid").value, pass: $("apPass").value }, function(){
+  postSettings({ ssid: $("apSsid").value, pass: $("apPass").value,
+                 wifi_pwr: $("wifiPwrSel").value }, function(){
     msg("热点已更新，下次连接请用新名称", "ok");
     $("apPass").value = "";
     refreshInfo(); loadSettings();
   });
 });
+function syncA11Rows(){
+  var isA11 = $("panelSel").value === "2";
+  $("a11Row").style.display = isA11 ? "" : "none";
+  $("a11Hint").style.display = isA11 ? "" : "none";
+}
+$("panelSel").addEventListener("change", syncA11Rows);
 $("savePanel").addEventListener("click", function(){
-  postSettings({ panel: $("panelSel").value, hflip: $("hflip").checked ? 1 : 0 }, function(){
+  var fields = { panel: $("panelSel").value, hflip: $("hflip").checked ? 1 : 0 };
+  if ($("panelSel").value === "2") fields.a11_var = $("a11Sel").value;
+  postSettings(fields, function(){
     msg("屏幕设置已保存", "ok");
     PANEL.id = +$("panelSel").value;
     refreshInfo();
@@ -1883,6 +1975,7 @@ $("padT").value = cfg.padT || 200; $("padB").value = cfg.padB || 200;
 $("padL").value = cfg.padL || 100; $("padR").value = cfg.padR || 100;
 $("padGrid").style.display = cfg.padOn ? "grid" : "none";
 CTRL.forEach(function(c){ setCtrlVal(c, cfg[c.key]); });
+$("space").value = cfg.space;   /* R1.0.26: 色域下拉回填存储值 */
 refreshDefMarks();
 refreshInfo();
 loadSettings();
