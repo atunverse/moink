@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="moink-page-version" content="R1.1.0">
+<meta name="moink-page-version" content="R1.1.1">
 <title>墨印 · MoInk</title>
 <style>
 /* ===== Cropper.js v1.6.2 | MIT | https://github.com/fengyuanchen/cropperjs ===== */
@@ -382,13 +382,12 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
     <div class="row" id="a1Row" style="display:none">
       <label>A1 驱动</label>
       <select id="a1Sel">
-        <option value="3">方案D 相位1（默认 · 与卖家固件同映射）</option>
-        <option value="4">方案D 相位2（相位对照）</option>
-        <option value="1">方案A 原生800×600 · 顺序（诊断）</option>
-        <option value="2">方案A′ 原生800×600 · 交错（诊断）</option>
+        <option value="3">方案D 相位1</option>
+        <option value="4">方案D 相位2</option>
+        <option value="1">方案A 原生800×600</option>
+        <option value="2">方案A′ 原生800×600</option>
       </select>
     </div>
-    <div class="hint" id="a1Hint" style="display:none">A1 屏可见区与 A0 相同（768×552），但栅极按两 bank 交错布线：源行必须交错送进栅极，顺序写会出现纵向条纹与上下半屏割裂（FB-009 / FB-010 根因）。<b>方案D 相位1</b> 用的是卖家可用固件的同一套映射，768×552 帧 1:1 落到可见区，不重采样、不裁切、无白边；相位2 只用于确认相位方向。<b>方案A / A′</b> 按控制器原生 800×600 渲染，本屏上会按可见区裁切（右 32 列 / 下 48 行落进备用源线与备用栅极），仅作对照诊断。</div>
     <div class="row" id="a11Row" style="display:none">
       <label>测试变体</label>
       <select id="a11Sel">
@@ -411,6 +410,7 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
       <summary>系统维护与升级</summary>
       <div class="row"><b style="font-size:13px">① 固件（.bin）</b></div>
       <input type="file" id="fwFile" accept=".bin" style="width:100%;font-size:13px">
+      <div class="row"><label><input type="checkbox" id="fwSyncPage"> 同步更新页面</label></div>
       <div class="row"><button class="mini" id="fwGo">上传固件并重启</button></div>
       <div class="row" style="margin-top:14px"><b style="font-size:13px">② 页面（index.html）</b></div>
       <input type="file" id="webFile" accept=".html,.htm" style="width:100%;font-size:13px">
@@ -473,11 +473,16 @@ var PANEL = { id: 0, name: "A0", w: 768, h: 552 };
    编辑空间恒为设备帧顺时针转 90°（EW x EH = h x w），见 applyPanelGeom()。 */
 var A1MODE = 3;        /* A1 驱动模式：1 A 顺序 / 2 A′ 交错 / 3 D 相位1 / 4 D 相位2 */
 var A1MODE_MAX = 4;
-var DEV_API = 1;       /* 设备帧格式契约版本（/api/info.api）；< 2 时无法发 800x600 帧 */
+/* 设备帧格式契约版本（/api/info.api）三态：0 = 未连设备 / 能力未知（本地离线打开
+   页面时 fetch 失败），1 = 旧固件（发不了 800x600 帧），2 = fw R1.1.0 及以后。
+   FB-011（R1.1.1）：未连设备时按「可用」乐观显示（离线预览是本项目主力工作流），
+   连上设备后一律以真实 api 严格收紧。 */
+var DEV_API = 0;
+function apiAtLeast2(){ return DEV_API === 0 || DEV_API >= 2; }
 var EW = 552, EH = 768;
 /* 屏幕 + A1 模式 -> 设备帧几何。 */
 function panelGeomOf(panelId, a1Mode){
-  if (panelId === 1 && DEV_API >= 2 && (+a1Mode === 1 || +a1Mode === 2))
+  if (panelId === 1 && apiAtLeast2() && (+a1Mode === 1 || +a1Mode === 2))
     return { w: 800, h: 600 };
   return { w: 768, h: 552 };
 }
@@ -1954,9 +1959,8 @@ function syncPanelRows(){
   $("a11Row").style.display = isA11 ? "" : "none";
   $("a11Hint").style.display = isA11 ? "" : "none";
   /* A1 驱动模式仅对 A1 且固件 api >= 2 时可调（旧固件没有这套写入路径）。 */
-  var showA1 = (p === "1") && (DEV_API >= 2);
+  var showA1 = (p === "1") && apiAtLeast2();
   $("a1Row").style.display = showA1 ? "" : "none";
-  $("a1Hint").style.display = showA1 ? "" : "none";
 }
 /* 编辑空间几何切换后的重排：画布尺寸 / 对象手柄 / 预览全部跟着换。 */
 function onGeomChanged(){
@@ -1971,12 +1975,12 @@ $("savePanel").addEventListener("click", function(){
   var fields = { panel: p, hflip: $("hflip").checked ? 1 : 0 };
   if (p === "2") fields.a11_var = $("a11Sel").value;
   if (p === "1") {
-    if (DEV_API >= 2) fields.a1_mode = $("a1Sel").value;
-    else msg("当前固件不支持 A1 驱动模式（api 1），请先升级固件；本次仍按 768×552 渲染", "err");
+    if (apiAtLeast2()) fields.a1_mode = $("a1Sel").value;
+    if (DEV_API === 1) msg("当前固件不支持 A1 驱动模式（api 1），请先升级固件；本次仍按 768×552 渲染", "err");
   }
   postSettings(fields, function(){
     PANEL.id = +p;
-    if (p === "1" && DEV_API >= 2) A1MODE = clamp(+$("a1Sel").value, 1, A1MODE_MAX);
+    if (p === "1" && apiAtLeast2()) A1MODE = clamp(+$("a1Sel").value, 1, A1MODE_MAX);
     var changed = applyPanelGeom(PANEL.id, A1MODE);
     if (changed) onGeomChanged();
     msg(changed ? ("屏幕设置已保存（编辑画布 " + EW + "×" + EH + "）") : "屏幕设置已保存", "ok");
@@ -2011,7 +2015,10 @@ $("fwGo").addEventListener("click", function(){
   $("otamsg").textContent = "上传固件中…（目标 http://192.168.4.1）";
   /* 包一层 text/plain Blob：Content-Type 落在简单请求白名单内 → 不触发跨源预检，
      对尚未启用通配匹配的旧固件（R1.0.5 之前）也能直接 OTA */
-  postFileTo(OTA_URL, new Blob([f], { type: "text/plain" }), function(){
+  /* FB-012（fw R1.1.1）：勾选「同步更新页面」时带上 ?sync_page=1，固件在
+     校验通过、确定重启之后清除设备上的页面热更标记，重启后直接使用内嵌新页面。 */
+  var otaUrl = OTA_URL + ($("fwSyncPage").checked ? "?sync_page=1" : "");
+  postFileTo(otaUrl, new Blob([f], { type: "text/plain" }), function(){
     $("otamsg").textContent = "固件升级成功，设备重启中…（约 45 秒内勿断电，然后刷新页面）";
     msg("固件升级成功，设备重启中（45 秒内勿断电）", "ok");
   }, function(e){ $("otamsg").textContent = "固件上传失败：" + e + "（net = 请确认已连接 MoInk 热点）"; });

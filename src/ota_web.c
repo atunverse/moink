@@ -135,6 +135,19 @@ static esp_err_t ota_handler(httpd_req_t *req)
     if (esp_ota_set_boot_partition(part) != ESP_OK)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "set boot failed");
 
+    /* FB-012（R1.1.1）：可选 ?sync_page=1 —— 升固件的同时清掉设备上的页面热更标记，
+       新固件起来后 GET / 直接吐内嵌新页面。否则 web 分区里的旧页面永远优先
+       （page_handler 先查 ota_web_has_page），用户会误以为固件没生效。
+       只在固件已通过校验、确定要切槽重启时才清：上传中断 / 校验失败都不动标记。 */
+    char qs[32];
+    if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) {
+        char v[8];
+        if (httpd_query_key_value(qs, "sync_page", v, sizeof(v)) == ESP_OK && v[0] == '1') {
+            ota_web_clear();
+            ESP_LOGI(TAG, "sync_page=1 -> hot-updated web page cleared");
+        }
+    }
+
     ESP_LOGI(TAG, "OTA done, rebooting into %s", part->label);
     httpd_resp_set_type(req, "text/plain");
     /* 页面可能从离线客户端/file:// 等跨源发起 OTA（固定目标 192.168.4.1），

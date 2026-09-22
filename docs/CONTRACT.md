@@ -2,7 +2,7 @@
 
 > 本文档是**固件与页面之间的唯一权威接口定义**，以及**屏驱动的物理契约**。
 > 改动任何一条必须同步更新 `check_frame.py` / `smoke_page.js` 并全量回归。
-> 版本：api = 2，fw = R1.1.0，page = R1.1.0。
+> 版本：api = 2，fw = R1.1.1，page = R1.1.1。
 
 ---
 
@@ -118,7 +118,7 @@
 | GET | `/api/settings` | 读设置 JSON：panel/hflip/a11_var/**a1_mode**/wifi_pwr/sleep_s/wake_s/ssid/pass_set |
 | POST | `/api/settings` | 写设置（`panel`/`hflip`/`a11_var`/`a1_mode`/`sleep_s`/`wake_s`，`ssid`+`pass` 成对） |
 | POST | `/api/frame` | 传图（§1 帧格式） |
-| POST | `/api/ota` | 固件升级（写另一槽 + 切换 + 45s 确认） |
+| POST | `/api/ota` | 固件升级（写另一槽 + 切换 + 45s 确认）；可选查询参数 `?sync_page=1` = 校验通过后一并清除页面热更标记，改用内嵌新页面（R1.1.1，FB-012） |
 | POST | `/api/web` | 页面热更（擦写 web 分区 + CRC32 + 提取版本 meta） |
 | POST | `/api/web/clear` | 清空 web 分区（回到内嵌页） |
 | POST | `/api/clear` | 残影清理（可选 `cycles` 1–4） |

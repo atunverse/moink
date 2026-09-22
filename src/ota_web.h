@@ -8,6 +8,8 @@
  * OTA + 页面热更。
  *   POST /api/ota  —— 收 app 包写另一 OTA 槽，校验后切槽重启；新固件跑稳 45s 才
  *                     取消回滚（esp_ota_mark_app_valid_cancel_rollback），失败自动回滚。
+ *                     可选查询参数 ?sync_page=1（R1.1.1，FB-012）：校验通过后一并
+ *                     清除页面热更标记，让新固件直接使用内嵌页面。
  *   POST /api/web  —— 收 index.html 写入 960KB "web" 分区（带 CRC32），并解析页面
  *                     版本号存 NVS。GET / 优先返回 web 分区里的页面，否则返回内嵌页。
  */

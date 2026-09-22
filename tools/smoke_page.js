@@ -145,17 +145,37 @@ ok("wrap handle h-w (left-bottom) + red delete handle h-del",
 ok("portrait migration (m16rot)", js.indexOf("cfg.m16rot") >= 0);
 
 // R1.1.0（FB-010）：A1 四档驱动模式 + 编辑空间几何随模式切换
-ok("R1.1.0 A1 drive mode UI (a1Row/a1Sel/a1Hint)",
-   page.includes('id="a1Row"') && page.includes('id="a1Sel"') && page.includes('id="a1Hint"'));
-ok("R1.1.0 geometry helpers",
+// R1.1.1（FB-011/FB-012）：档位文案精简 + a1Hint 移除 + DEV_API 三态 + OTA 同步页面
+ok("R1.1.1 A1 drive mode UI (a1Row/a1Sel, a1Hint removed)",
+   page.includes('id="a1Row"') && page.includes('id="a1Sel"') && page.indexOf("a1Hint") < 0);
+ok("R1.1.1 A1 options simplified (no trailing notes)",
+   page.includes(">方案D 相位1</option>") && page.includes(">方案D 相位2</option>")
+   && page.indexOf("与卖家固件同映射") < 0 && page.indexOf("（相位对照）") < 0
+   && page.indexOf("· 顺序（诊断）") < 0 && page.indexOf("· 交错（诊断）") < 0);
+ok("R1.1.1 geometry helpers",
    js.indexOf("function panelGeomOf") >= 0 && js.indexOf("function applyPanelGeom") >= 0
    && js.indexOf("function migrateGeomTo") >= 0 && js.indexOf("function onGeomChanged") >= 0);
 ok("R1.1.0 frame version follows geometry", js.indexOf("(PANEL.w === 800) ? 2 : 1") >= 0);
-ok("R1.1.0 api-2 gate (DEV_API)",
-   js.indexOf("var DEV_API = 1") >= 0 && js.indexOf("DEV_API >= 2") >= 0);
+ok("R1.1.1 DEV_API tri-state + apiAtLeast2()",
+   js.indexOf("var DEV_API = 0") >= 0 && js.indexOf("function apiAtLeast2()") >= 0
+   && js.indexOf("DEV_API === 0 || DEV_API >= 2") >= 0);
 ok("R1.1.0 a1_mode saved with panel",
    js.indexOf('fields.a1_mode = $("a1Sel").value') >= 0 && js.indexOf("syncPanelRows") >= 0);
-eq("R1.1.0 panelGeomOf default (no api2 / mode D)", sandbox.panelGeomOf(1, 3).w + "x" + sandbox.panelGeomOf(1, 3).h, "768x552");
+ok("R1.1.1 OTA sync-page checkbox + query param",
+   page.includes('id="fwSyncPage"') && js.indexOf('$("fwSyncPage").checked ? "?sync_page=1"') >= 0);
+// DEV_API 三态行为：0 = 未连设备（离线乐观） / 1 = 旧固件（收紧） / 2 = 新固件
+sandbox.DEV_API = 0;
+eq("R1.1.1 panelGeomOf offline(0) + mode A -> native 800x600",
+   sandbox.panelGeomOf(1, 1).w + "x" + sandbox.panelGeomOf(1, 1).h, "800x600");
+eq("R1.1.1 panelGeomOf offline(0) + mode D -> 768x552",
+   sandbox.panelGeomOf(1, 3).w + "x" + sandbox.panelGeomOf(1, 3).h, "768x552");
+sandbox.DEV_API = 1;
+eq("R1.1.1 panelGeomOf legacy api=1 + mode A -> 768x552 (tightened)",
+   sandbox.panelGeomOf(1, 1).w + "x" + sandbox.panelGeomOf(1, 1).h, "768x552");
+sandbox.DEV_API = 2;
+eq("R1.1.1 panelGeomOf api=2 + mode A -> native 800x600",
+   sandbox.panelGeomOf(1, 1).w + "x" + sandbox.panelGeomOf(1, 1).h, "800x600");
+sandbox.DEV_API = 0;   /* 还原初态，避免污染后续断言 */
 eq("R1.1.0 panelGeomOf A0 ignores mode", sandbox.panelGeomOf(0, 1).w + "x" + sandbox.panelGeomOf(0, 1).h, "768x552");
 eq("R1.1.0 GEOM_SRC default geometry", sandbox.GEOM_SRC.w + "x" + sandbox.GEOM_SRC.h, "552x768");
 
