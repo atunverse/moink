@@ -33,7 +33,7 @@
 typedef struct {
     uint8_t  panel;     /* EPD_PANEL_A0 / EPD_PANEL_A1 / EPD_PANEL_A11 */
     uint8_t  hflip;     /* 0/1 水平翻转 */
-    uint8_t  a11_var;   /* A1.1 测试画像诊断变体 1..6（其他屏忽略） */
+    uint8_t  a11_var;   /* A1.1 测试画像诊断变体 1..8（其他屏忽略） */
     uint8_t  wifi_pwr;  /* SETT_WIFI_PWR_HIGH / MID / LOW */
     uint32_t sleep_s;   /* 空闲后深睡；0 = 不休眠 */
     uint32_t wake_s;    /* 定时自动唤醒间隔；0 = 关闭 */

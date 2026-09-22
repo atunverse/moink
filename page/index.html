@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="moink-page-version" content="R1.0.24">
+<meta name="moink-page-version" content="R1.0.25">
 <title>墨印 · MoInk</title>
 <style>
 /* ===== Cropper.js v1.6.2 | MIT | https://github.com/fengyuanchen/cropperjs ===== */
@@ -381,9 +381,11 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
         <option value="4">V4 接缝行重叠重写</option>
         <option value="5">V5 分块写（每行独立 CS）</option>
         <option value="6">V6 低速（300kHz）</option>
+        <option value="7">V7 800×600 扫描（中部48行填白）</option>
+        <option value="8">V8 800×600 扫描（内容拉伸600行）</option>
       </select>
     </div>
-    <div class="hint" id="a11Hint" style="display:none">A1.1 屏（编号 A1 但刷新分两半、中间有黑线的批次）专用测试驱动。建议用黑白色对比图逐个变体测试：每换一个变体保存后传一张图，观察中间黑线是否变浅或消失。若六个变体均无效，说明为批次物理特性。</div>
+    <div class="hint" id="a11Hint" style="display:none">A1.1 屏（编号 A1 但刷新分两半、中间有黑线的批次）专用测试驱动（A1 屏白线已在固件 R1.0.11 默认修复，无需变体）。V1–V6：黑白对比图逐个变体测中线变化；V7/V8：分辨率诊断（TRES 改原生 800×600，V8 已在 A1 屏真机验证有效）。每换一个变体保存后传一张图并拍照记录。</div>
     <div class="row"><label><input type="checkbox" id="hflip"> 左右镜像</label></div>
     <div class="row"><button class="mini" id="savePanel">保存</button></div>
     </details>

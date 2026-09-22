@@ -116,7 +116,7 @@ esp_err_t settings_set_hflip(uint8_t v)
 
 esp_err_t settings_set_a11_var(uint8_t v)
 {
-    if (v < 1 || v > 6) v = 1;
+    if (v < 1 || v > 8) v = 1;
     s_cfg.a11_var = v;
     store_u8("a11_var", v);
     settings_commit();
