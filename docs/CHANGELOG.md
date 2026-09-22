@@ -26,6 +26,27 @@
 
 ---
 
+## [fw 不变 + page R1.0.26] 2026-09-22
+
+### 新增
+- **「标准」色彩档（FB-002 Stage A 整合，基线 B2）**：色域新增 `std` 标准档并设为**默认**——分通道 decode γ=1.75 + 黄 (255,230,0) / 红 (220,0,0) 目标色。参数为用户真机定稿值（`samples/FB-002/校准表-StageA-final.md`，CAL-1→CAL-7 感官迭代），写死不可调。校准面板/测试图/色域图等标定工具保留在支线页 `page-calib/`（CALIB-0.4 / EXP-1.0），不进主线。
+
+### 修改
+- **默认色域 linear → std**：仅影响无存储配置的新用户/未自定义过色域的设备；已存储 `cfg4.space`（linear/sRGB）的设备原值保留。色域下拉启动时回填存储值（修正此前 select 不回填的既有显示问题）。
+
+### 修复
+- `tools/smoke_page.js` 版本断言过时（写死 R1.0.22）改动态匹配；正则兼容 autocrlf CRLF 工作区。
+
+### 涉及文件
+- `page/index.html`、`tools/check_algo.py`（B2 基线）、`tools/smoke_page.js`、`tools/_r1026_patch.py`、`tools/_r1026_regress.js`（本地）
+
+### 影响范围与注意事项
+- **回归门禁全绿**：check_algo B2 12/12 MATCH（quantize 按 B2 规则：std 注入块剥离后与 M7 冻结版逐字一致）；linear/sRGB 两旧档 18 案例（9 抖动模式 × 强度组合）与 R1.0.25 逐字节一致；std 档输出与 EXP-1.0 试验页逐字节一致；smoke_page 全 PASS；check_frame PASS。
+- 页面级改动，**固件零编译**（fw 维持 R1.0.11）；帧契约/页面契约 768×552 不变；无 api 变化。热更 `page-R1.0.26.html` 即可，下次固件批再固化嵌入。
+- 已知取舍（用户真机知情接受）：大面积纯红有轻微黄点纹理（~1-6% 随尺寸）、大面积纯黄边缘行可能有少量白点——FS 误差在 yTarG/rLum 目标色与全亮源像素间的固有扩散，非缺陷。
+
+---
+
 ## [fw R1.0.11 + page R1.0.25] 2026-09-22
 
 ### 修复

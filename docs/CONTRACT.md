@@ -107,3 +107,8 @@
   - `python tools/check_frame.py`（帧契约黄金校验）
   - `node tools/smoke_page.js`（页面纯函数 + 帧头 + 旋转 + 文字层几何）
   - `python tools/check_algo.py`（算法冻结，12 函数逐字 MATCH）
+
+> **★ 算法基线 B2（2026-09-22，FB-002 Stage A）**：用户授权解锁后重立。quantize 允许
+> 「std 标准档」注入块（CDEC 分通道 decode γ1.75 + 黄 (255,230,0) / 红 (220,0,0) 目标色），
+> check_algo 剥离该块后与 M7 冻结版逐字比对；其余 11 函数仍逐字 MATCH。
+> std 档参数为真机定稿值（`samples/FB-002/校准表-StageA-final.md`），linear/sRGB 两旧档行为不变。

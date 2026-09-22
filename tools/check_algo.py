@@ -8,6 +8,11 @@ check_algo.py —— 验证「图像算法冻结」：M7 页面与新页面的�
     page/index.html             （新页）
 各抽取一遍核心算法函数体，规范化空白后逐函数比对，任一不一致即 FAIL。
 
+【基线 B2，2026-09-22】FB-002 Stage A 整合（用户授权解锁）：quantize 允许
+「std 标准档」注入块（CDEC 分通道 decode），剥离该块后仍须与 M7 冻结版
+逐字一致；其余 11 函数维持逐字 MATCH。注：quantize 内的注入块不得含注释
+（本脚本按规范化文本比对，注释会破坏剥离对齐）。
+
 用法：python tools/check_algo.py   （要求 moink/ 与 eink-frame/ 同级）
 """
 import os
@@ -58,6 +63,12 @@ def norm(s):
     return re.sub(r"\s+", "", s)
 
 
+# 基线 B2：quantize 的 std 注入块（规范化文本，见 page/index.html STD_LUT/STD_PAL）
+STD_MARK = ('varCDEC=null;if(cfg.space==="std"){CDEC=STD_LUT;pal=STD_PAL;}'
+            'if(CDEC){for(i=0;i<n*3;i++){varv=clamp(flat[i],0,255);'
+            'flat[i]=CDEC[i%3][(v+0.5)|0];}}elseif(lin){')
+
+
 def main():
     if not os.path.exists(OLD):
         print("SKIP: reference M7 page not found at", OLD)
@@ -72,6 +83,18 @@ def main():
         if a is None or b is None:
             print("MISS  %-16s (old=%s new=%s)" % (fn, a is not None, b is not None))
             ok = False
+            continue
+        if fn == "quantize":
+            nb = norm(b)
+            if nb.count(STD_MARK) != 1:
+                print("DIFF  quantize (B2 std-block missing or duplicated)")
+                ok = False
+                continue
+            if nb.replace(STD_MARK, "if(lin){", 1) == norm(a):
+                print("MATCH quantize (B2: std block stripped == M7)")
+            else:
+                print("DIFF  quantize (B2: stripped body != M7)")
+                ok = False
             continue
         if norm(a) == norm(b):
             print("MATCH %-16s" % fn)

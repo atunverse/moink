@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="moink-page-version" content="R1.0.25">
+<meta name="moink-page-version" content="R1.0.26">
 <title>墨印 · MoInk</title>
 <style>
 /* ===== Cropper.js v1.6.2 | MIT | https://github.com/fengyuanchen/cropperjs ===== */
@@ -237,7 +237,7 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
           <option value="none">无抖动</option>
         </select>
         <label>色域</label>
-        <select id="space"><option value="linear">线性光</option><option value="srgb">sRGB</option></select>
+        <select id="space"><option value="std">标准</option><option value="linear">线性光</option><option value="srgb">sRGB</option></select>
         <label><input type="checkbox" id="levels" checked> 自动色阶</label>
       </div>
       <div class="hint" id="dmodeHint" style="margin:2px 0 6px"></div>
@@ -454,6 +454,28 @@ function l2s(v){ v=clamp(v,0,255)/255; return 255*(v<=0.0031308?v*12.92:1.055*Ma
 var S2L_LUT=(function(){ var t=new Float64Array(256); for(var i=0;i<256;i++)t[i]=s2l(i); return t; })();
 var PAL_LIN = PAL.map(function(p){ return p.map(s2l); });
 
+/* ==================================================================
+   std 标准档（FB-002 Stage A 定稿，基线 B2，2026-09-22）
+   分通道 decode γ=1.75 + 黄 (255,230,0) / 红 (220,0,0) 目标色。
+   参数为真机定稿值，写死不可调（samples/FB-002/校准表-StageA-final.md）；
+   check_algo B2：quantize 的 std 注入块剥离后须与 M7 冻结版逐字一致。
+   ================================================================== */
+var STD_LUT = (function(){
+  var lut = [];
+  for (var c = 0; c < 3; c++){
+    var t = new Float64Array(256);
+    for (var i = 0; i < 256; i++) t[i] = 255 * Math.pow(i / 255, 1.75);
+    lut.push(t);
+  }
+  return lut;
+})();
+var STD_PAL = [
+  [0, 0, 0],
+  [255, 255, 255],
+  [255, STD_LUT[1][230], 0],
+  [STD_LUT[0][220], 0, 0]
+];
+
 var RAMPS = {
   sunset: [[0,[0,0,0]],[0.10,[26,6,4]],[0.26,[92,18,12]],[0.42,[168,40,16]],
            [0.56,[214,86,18]],[0.70,[236,140,26]],[0.84,[248,200,60]],
@@ -490,7 +512,7 @@ var DEF = {
   warmBoost: 0.60, coolPull: 0.25, coolCap: 60, coolDesat: 0.25,
   warmPull: 0.12, warmPullCap: 18,
   autoLevels: 1, sharpen: 0.30,
-  dither: "fs", ditherStrength: 0.85, space: "linear",
+  dither: "fs", ditherStrength: 0.85, space: "std",
   lastMode: 0, text: "", textFont: 0, textSize: 100,
   textColor: 0, textBg: 0,
   cropRot: 0, padOn: false, padT: 0, padR: 0, padB: 0, padL: 0,
@@ -713,7 +735,14 @@ function quantize(mapped, w, h, cfg){
   var mode = cfg.dither, strength = cfg.ditherStrength;
   var lin = (cfg.space === "linear");
   var pal = lin ? PAL_LIN : PAL;
-  if (lin){
+  var CDEC = null;
+  if (cfg.space === "std"){ CDEC = STD_LUT; pal = STD_PAL; }
+  if (CDEC){
+    for (i = 0; i < n*3; i++){
+      var v = clamp(flat[i], 0, 255);
+      flat[i] = CDEC[i % 3][(v + 0.5) | 0];
+    }
+  } else if (lin){
     for (i = 0; i < n*3; i++){
       var v = clamp(flat[i], 0, 255);
       flat[i] = S2L_LUT[(v + 0.5) | 0];
@@ -1946,6 +1975,7 @@ $("padT").value = cfg.padT || 200; $("padB").value = cfg.padB || 200;
 $("padL").value = cfg.padL || 100; $("padR").value = cfg.padR || 100;
 $("padGrid").style.display = cfg.padOn ? "grid" : "none";
 CTRL.forEach(function(c){ setCtrlVal(c, cfg[c.key]); });
+$("space").value = cfg.space;   /* R1.0.26: 色域下拉回填存储值 */
 refreshDefMarks();
 refreshInfo();
 loadSettings();

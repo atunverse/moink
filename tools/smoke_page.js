@@ -11,7 +11,8 @@ const vm = require("vm");
 
 const page = fs.readFileSync(path.join(__dirname, "..", "page", "index.html"), "utf8");
 // R1.0.12 起页面有两个 <script> 块（第 1 块 = 内嵌 Cropper.js，第 2 块 = 主脚本）。
-const m = page.match(/<script>\n"use strict";\n([\s\S]*?)\n<\/script>/);
+// \r?\n：兼容 core.autocrlf 检出为 CRLF 的工作区（2026-09-22 修正）。
+const m = page.match(/<script>\r?\n"use strict";\r?\n([\s\S]*?)\r?\n<\/script>/);
 if (!m) { console.error("no main <script> found"); process.exit(1); }
 const js = m[1];
 
@@ -40,7 +41,7 @@ eq("script closer count (cropper + main = exactly 2)", (page.match(/<\/script>/g
 ok("cropper.js inlined (first script block)", /<script>\s*\n?\/\* ===== Cropper\.js v1\.6\.2/.test(page));
 ok("startup block intact (loadSettings call present)", /loadSettings\(\)/.test(js));
 // R1.0.12 结构检查
-ok("page version = R1.0.22", /moink-page-version" content="R1\.0\.22"/.test(page));
+ok("page version meta present (R1.0.x)", /moink-page-version" content="R1\.0\.\d+"/.test(page));
 // 10. R1.0.18 UI 重构：齿轮入口 / 返回按钮 / 无页签 / 步骤条 / 设备信息网格 / 分栏 / 文案
 ok("R1.0.18 gear + back nav present", page.includes('id="gearBtn"') && page.includes('id="backBtn"'));
 ok("R1.0.18 tab bar removed", page.indexOf('data-t="image"') < 0 && page.indexOf('id="tabs"') < 0);
