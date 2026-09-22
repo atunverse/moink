@@ -15,6 +15,9 @@ static uint8_t *s_fb = NULL;
 static SemaphoreHandle_t s_fb_mutex = NULL;
 static SemaphoreHandle_t s_frame_ready = NULL;
 
+/* 最近一次被接受的帧几何（768x552 或 A1 原生 800x600），显示时交给驱动。 */
+static uint16_t s_fw = EPD_A1_W, s_fh = EPD_A1_H;
+
 /* CRC-16/CCITT-FALSE：poly 0x1021，init 0xFFFF，无反射、无终异或。 */
 static uint16_t crc16_update(uint16_t crc, const uint8_t *d, size_t n)
 {
@@ -37,7 +40,10 @@ void frame_init(void)
     }
     s_fb_mutex = xSemaphoreCreateMutex();
     s_frame_ready = xSemaphoreCreateBinary();
-    ESP_LOGI(TAG, "frame buffer %d bytes ready", EPD_MAX_BUF_LEN);
+    s_fw = epd_profile()->w;
+    s_fh = epd_profile()->h;
+    ESP_LOGI(TAG, "frame buffer %d bytes ready (profile %ux%u)",
+             EPD_MAX_BUF_LEN, (unsigned)s_fw, (unsigned)s_fh);
 }
 
 void frame_wait(void)
@@ -48,7 +54,7 @@ void frame_wait(void)
 int frame_display_now(void)
 {
     if (xSemaphoreTake(s_fb_mutex, portMAX_DELAY) != pdTRUE) return -1;
-    int r = epd_display_2bpp(s_fb);
+    int r = epd_display_2bpp_wh(s_fb, s_fw, s_fh);
     xSemaphoreGive(s_fb_mutex);
     if (r == 0) epd_panel_deep_sleep();
     return r;
@@ -68,8 +74,10 @@ int frame_clear_cycles(int cycles)
 esp_err_t frame_upload_handler(httpd_req_t *req)
 {
     power_activity();   /* R1.0.8：上传期间不许空闲休眠 */
-    /* R1.0.8：精确校验总长 = 头16B + 载荷；多余尾字节会污染 keep-alive 连接 */
-    if (req->content_len != (int)(FRAME_HDR_LEN + epd_profile()->buf_len)) {
+    /* R1.1.0：先按最大合法载荷粗筛（A1 原生 800x600 = 120000），细筛在读头后
+       按 hdr 里的宽高做——A1 允许 768x552 与 800x600 两种帧。 */
+    if (req->content_len < (int)(FRAME_HDR_LEN + 1) ||
+        req->content_len > (int)(FRAME_HDR_LEN + EPD_MAX_BUF_LEN)) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "size mismatch");
     }
 
@@ -86,7 +94,7 @@ esp_err_t frame_upload_handler(httpd_req_t *req)
 
     if (hdr[0] != FRAME_MAGIC0 || hdr[1] != FRAME_MAGIC1)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad magic");
-    if (hdr[2] != FRAME_FMT_VERSION)
+    if (hdr[2] != FRAME_FMT_VERSION && hdr[2] != FRAME_FMT_VERSION_NATIVE)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad version");
 
     uint16_t width  = (uint16_t)((hdr[4] << 8) | hdr[5]);
@@ -95,11 +103,13 @@ esp_err_t frame_upload_handler(httpd_req_t *req)
                       ((uint32_t)hdr[10] << 8) | hdr[11];
     uint16_t crc_hdr = (uint16_t)((hdr[12] << 8) | hdr[13]);
 
-    const epd_profile_t *p = epd_profile();
-    if (width != p->w || height != p->h)
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "size mismatch");
-    if (len != p->buf_len)
+    /* 载荷长度必须与几何自洽（4 像素/字节），且被当前画像 / A1 模式接受。 */
+    if ((width & 3) || len != (uint32_t)(width / 4) * (uint32_t)height)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "len mismatch");
+    if (!epd_frame_geom_ok(width, height, len))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unsupported geometry");
+    if (req->content_len != (int)(FRAME_HDR_LEN + len))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "size mismatch");
 
     /* 面板类型字段（hdr[3]）仅信息性；实际面板由设置决定，不随帧切换。 */
 
@@ -127,6 +137,8 @@ esp_err_t frame_upload_handler(httpd_req_t *req)
     ESP_LOGI(TAG, "frame accepted: %ux%u (%lu bytes), CRC ok",
              width, height, (unsigned long)len);
 
+    s_fw = width;                             /* 显示任务据此选写入路径 */
+    s_fh = height;
     xSemaphoreGive(s_frame_ready);            /* 唤醒显示任务 */
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, "OK");

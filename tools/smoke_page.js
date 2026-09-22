@@ -36,12 +36,14 @@ function ok(name, cond) {
 function eq(name, got, want) { ok(name + " (got " + got + " want " + want + ")", got === want); }
 
 // 静态防线：脚本串里若出现字面量 </script>，浏览器会提前终结脚本块。
-// R1.0.12 起 = 2 个合法闭合符（内嵌 Cropper 块 + 主脚本块），多一个都不行。
-eq("script closer count (cropper + main = exactly 2)", (page.match(/<\/script>/g) || []).length, 2);
+// R1.0.12 起：合法闭合符数量随功能块增加而调整（R1.1.0 = 3），详见下方断言。
+// R1.1.0 起 = 3 个合法闭合符（内嵌 Cropper 块 + 页脚版本填充块 + 主脚本块），多一个都不行。
+eq("script closer count (cropper + footer + main = exactly 3)", (page.match(/<\/script>/g) || []).length, 3);
+ok("offline export keeps </script> escaped in injected html", page.indexOf("<\\/script>") >= 0);
 ok("cropper.js inlined (first script block)", /<script>\s*\n?\/\* ===== Cropper\.js v1\.6\.2/.test(page));
 ok("startup block intact (loadSettings call present)", /loadSettings\(\)/.test(js));
 // R1.0.12 结构检查
-ok("page version meta present (R1.0.x)", /moink-page-version" content="R1\.0\.\d+"/.test(page));
+ok("page version meta present (R1.x.y)", /moink-page-version" content="R1\.\d+\.\d+"/.test(page));
 // 10. R1.0.18 UI 重构：齿轮入口 / 返回按钮 / 无页签 / 步骤条 / 设备信息网格 / 分栏 / 文案
 ok("R1.0.18 gear + back nav present", page.includes('id="gearBtn"') && page.includes('id="backBtn"'));
 ok("R1.0.18 tab bar removed", page.indexOf('data-t="image"') < 0 && page.indexOf('id="tabs"') < 0);
@@ -141,6 +143,27 @@ ok("wrap handle h-w (left-bottom) + red delete handle h-del",
   ok("card order pick < style < pad < text", o1 >= 0 && o1 < o2 && o2 < o3 && o3 < o4);
 }
 ok("portrait migration (m16rot)", js.indexOf("cfg.m16rot") >= 0);
+
+// R1.1.0（FB-010）：A1 四档驱动模式 + 编辑空间几何随模式切换
+ok("R1.1.0 A1 drive mode UI (a1Row/a1Sel/a1Hint)",
+   page.includes('id="a1Row"') && page.includes('id="a1Sel"') && page.includes('id="a1Hint"'));
+ok("R1.1.0 geometry helpers",
+   js.indexOf("function panelGeomOf") >= 0 && js.indexOf("function applyPanelGeom") >= 0
+   && js.indexOf("function migrateGeomTo") >= 0 && js.indexOf("function onGeomChanged") >= 0);
+ok("R1.1.0 frame version follows geometry", js.indexOf("(PANEL.w === 800) ? 2 : 1") >= 0);
+ok("R1.1.0 api-2 gate (DEV_API)",
+   js.indexOf("var DEV_API = 1") >= 0 && js.indexOf("DEV_API >= 2") >= 0);
+ok("R1.1.0 a1_mode saved with panel",
+   js.indexOf('fields.a1_mode = $("a1Sel").value') >= 0 && js.indexOf("syncPanelRows") >= 0);
+eq("R1.1.0 panelGeomOf default (no api2 / mode D)", sandbox.panelGeomOf(1, 3).w + "x" + sandbox.panelGeomOf(1, 3).h, "768x552");
+eq("R1.1.0 panelGeomOf A0 ignores mode", sandbox.panelGeomOf(0, 1).w + "x" + sandbox.panelGeomOf(0, 1).h, "768x552");
+eq("R1.1.0 GEOM_SRC default geometry", sandbox.GEOM_SRC.w + "x" + sandbox.GEOM_SRC.h, "552x768");
+
+ok("页脚存在 (footer#appFoot)",
+   page.indexOf('id="appFoot"') >= 0 && page.indexOf("footer#appFoot") >= 0);
+ok("页脚含 GitHub 地址", page.indexOf('href="https://github.com/atunverse/moink"') >= 0);
+ok("页脚版本号运行时填充 (footVer + meta)",
+   page.indexOf('id="footVer"') >= 0 && page.indexOf('meta[name="moink-page-version"]') >= 0);
 
 console.log(failed === 0 ? "SMOKE: ALL PASS" : ("SMOKE: " + failed + " FAILED"));
 process.exit(failed === 0 ? 0 : 1);

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="moink-page-version" content="R1.0.26">
+<meta name="moink-page-version" content="R1.1.0">
 <title>墨印 · MoInk</title>
 <style>
 /* ===== Cropper.js v1.6.2 | MIT | https://github.com/fengyuanchen/cropperjs ===== */
@@ -43,6 +43,13 @@ header .sub{ margin-top:2px; font-size:12px; color:var(--mut); }
 #conn.ok{ background:#e3f2e8; color:var(--ok); }
 #conn.ok::before{ background:var(--ok); }
 main{ max-width:640px; margin:0 auto; padding:6px 14px 40px; }
+footer#appFoot{ max-width:640px; margin:0 auto; padding:2px 14px 34px;
+                display:flex; align-items:center; justify-content:center; gap:14px;
+                flex-wrap:wrap; font-size:12px; color:var(--mut); }
+footer#appFoot b{ font-weight:400; }
+footer#appFoot a{ color:var(--mut); text-decoration:none;
+                  border-bottom:1px solid var(--line); padding-bottom:1px; }
+footer#appFoot a:active,footer#appFoot a:hover{ color:var(--acc); border-bottom-color:var(--acc); }
 .card{ background:var(--card); border:1px solid var(--line); border-radius:16px;
        padding:16px; margin:12px 0; }
 .card h2{ margin:0 0 12px; font-size:16px; font-weight:700; }
@@ -372,6 +379,16 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
       <label>屏幕</label>
       <select id="panelSel"><option value="0">A0</option><option value="1">A1</option><option value="2">A1.1（测试）</option></select>
     </div>
+    <div class="row" id="a1Row" style="display:none">
+      <label>A1 驱动</label>
+      <select id="a1Sel">
+        <option value="3">方案D 相位1（默认 · 与卖家固件同映射）</option>
+        <option value="4">方案D 相位2（相位对照）</option>
+        <option value="1">方案A 原生800×600 · 顺序（诊断）</option>
+        <option value="2">方案A′ 原生800×600 · 交错（诊断）</option>
+      </select>
+    </div>
+    <div class="hint" id="a1Hint" style="display:none">A1 屏可见区与 A0 相同（768×552），但栅极按两 bank 交错布线：源行必须交错送进栅极，顺序写会出现纵向条纹与上下半屏割裂（FB-009 / FB-010 根因）。<b>方案D 相位1</b> 用的是卖家可用固件的同一套映射，768×552 帧 1:1 落到可见区，不重采样、不裁切、无白边；相位2 只用于确认相位方向。<b>方案A / A′</b> 按控制器原生 800×600 渲染，本屏上会按可见区裁切（右 32 列 / 下 48 行落进备用源线与备用栅极），仅作对照诊断。</div>
     <div class="row" id="a11Row" style="display:none">
       <label>测试变体</label>
       <select id="a11Sel">
@@ -417,6 +434,16 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
 
 </main>
 
+<footer id="appFoot">
+  <span>墨印 · MoInk<b id="footVer"></b></span>
+  <a href="https://github.com/atunverse/moink" target="_blank" rel="noopener noreferrer">GitHub · atunverse/moink</a>
+</footer>
+<script>
+(function(){var m=document.querySelector('meta[name="moink-page-version"]');
+var e=document.getElementById("footVer");
+if(m&&m.content&&e){ e.textContent=" · 页面 "+m.content; }})();
+</script>
+
 <script>
 /* ===== Cropper.js v1.6.2 | MIT | https://github.com/fengyuanchen/cropperjs ===== */
 /*!
@@ -440,8 +467,50 @@ function api(p){ return BASE + p; }
 /* ==================================================================
    【FROZEN】图像算法（eink-warm 已验证基线，锁定不改）
    ================================================================== */
-var PANEL = { id: 0, name: "A0", w: 768, h: 552 };  /* 设备帧 768x552（固件契约，不动） */
-var EW = 552, EH = 768;  /* R1.0.16 竖屏编辑空间：预览/裁剪/留白/文字坐标全竖屏，输出前 rotateCW 转 90° */
+var PANEL = { id: 0, name: "A0", w: 768, h: 552 };
+/* R1.1.0（FB-010）：设备帧几何由「屏幕 + A1 驱动模式」共同决定——
+   A0 / A1.1 / A1(方案D) = 768x552；A1(方案A / A′) = 控制器原生 800x600。
+   编辑空间恒为设备帧顺时针转 90°（EW x EH = h x w），见 applyPanelGeom()。 */
+var A1MODE = 3;        /* A1 驱动模式：1 A 顺序 / 2 A′ 交错 / 3 D 相位1 / 4 D 相位2 */
+var A1MODE_MAX = 4;
+var DEV_API = 1;       /* 设备帧格式契约版本（/api/info.api）；< 2 时无法发 800x600 帧 */
+var EW = 552, EH = 768;
+/* 屏幕 + A1 模式 -> 设备帧几何。 */
+function panelGeomOf(panelId, a1Mode){
+  if (panelId === 1 && DEV_API >= 2 && (+a1Mode === 1 || +a1Mode === 2))
+    return { w: 800, h: 600 };
+  return { w: 768, h: 552 };
+}
+/* GEOM_SRC = 当前已存文字/留白坐标所依据的编辑空间几何（竖屏）。 */
+var GEOM_SRC = { w: 552, h: 768 };
+function migrateGeomTo(nw, nh){
+  if (GEOM_SRC.w === nw && GEOM_SRC.h === nh) return false;
+  var kx = nw / GEOM_SRC.w, ky = nh / GEOM_SRC.h;
+  function sc(o){
+    o.x = Math.round((+o.x || 0) * kx);
+    o.y = Math.round((+o.y || 0) * ky);
+    o.size = clamp(Math.round((+o.size || 48) * kx), 16, 240);
+    o.wrap = (+o.wrap) ? Math.round(+o.wrap * kx) : 0;
+  }
+  (cfg.objsImg || []).forEach(sc);
+  (cfg.objsNote || []).forEach(sc);
+  cfg.padL = Math.round((+cfg.padL || 0) * kx); cfg.padR = Math.round((+cfg.padR || 0) * kx);
+  cfg.padT = Math.round((+cfg.padT || 0) * ky); cfg.padB = Math.round((+cfg.padB || 0) * ky);
+  GEOM_SRC = { w: nw, h: nh };
+  cfg.geomW = nw; cfg.geomH = nh;
+  saveCfg();
+  return true;
+}
+/* 应用「屏幕 + A1 模式」：切换 PANEL 与编辑空间；几何变了则按比例迁移已存工程
+   （坐标/字号/换行宽/留白），保证版面意图不变。返回是否发生了几何切换。 */
+function applyPanelGeom(panelId, a1Mode){
+  var g = panelGeomOf(panelId, a1Mode);
+  if (PANEL.w === g.w && PANEL.h === g.h){ PANEL.id = +panelId; return false; }
+  PANEL.id = +panelId; PANEL.w = g.w; PANEL.h = g.h;
+  EW = g.h; EH = g.w;
+  migrateGeomTo(EW, EH);
+  return true;
+}
 var MODE  = 0;
 
 var PAL = [[0,0,0], [255,255,255], [255,255,0], [255,0,0]];   /* 0K 1W 2黄 3红 */
@@ -1040,7 +1109,7 @@ function startLive(){
   } catch(e){ liveBase = null; }
 }
 
-/* R1.0.16 竖屏桥接：编辑空间(552x768)顺时针转 90° → 设备帧(768x552)。
+/* 竖屏桥接：编辑空间(552x768 或 600x800)顺时针转 90° → 设备帧(768x552 或 800x600)。
    方向上机用非对称测试图核对；若相反，把 (W-1-y) 换成 y、x*W 换成 (H-1-x) 即逆时针。 */
 function rotateCW(idx, w, h){
   var W = h, out = new Uint8Array(w*h);
@@ -1085,7 +1154,8 @@ function frameWithHeader(payload){
   var hdr = new Uint8Array(16);
   var len = payload.length;
   var crc = crc16(payload);
-  hdr[0] = 0xA5; hdr[1] = 0x5A; hdr[2] = 1; hdr[3] = PANEL.id;
+  /* hdr[2]：1 = 768x552 载荷；2 = A1 原生 800x600 载荷（固件 api 2 起接受） */
+  hdr[0] = 0xA5; hdr[1] = 0x5A; hdr[2] = (PANEL.w === 800) ? 2 : 1; hdr[3] = PANEL.id;
   hdr[4] = (PANEL.w >> 8) & 0xFF; hdr[5] = PANEL.w & 0xFF;
   hdr[6] = (PANEL.h >> 8) & 0xFF; hdr[7] = PANEL.h & 0xFF;
   hdr[8] = (len >>> 24) & 0xFF; hdr[9] = (len >>> 16) & 0xFF;
@@ -1170,6 +1240,12 @@ function loadCfg(){
     });
     cfg.m16rot = 1; saveCfg();
   }
+  /* R1.1.0：已存坐标所依据的编辑空间几何（老工程 = 竖屏 552x768）。
+     设备信息到达后由 applyPanelGeom() 校正，必要时按比例迁移。 */
+  GEOM_SRC = { w: (+cfg.geomW || 552), h: (+cfg.geomH || 768) };
+  cfg.geomW = GEOM_SRC.w; cfg.geomH = GEOM_SRC.h;
+  PANEL.w = GEOM_SRC.h; PANEL.h = GEOM_SRC.w;
+  EW = GEOM_SRC.w; EH = GEOM_SRC.h;
   /* R1.0.13 的 m13bg 白底迁移已按用户要求撤销（R1.0.15）：新对象默认透明底，
      已被迁移成白底的旧对象保持不变，可在面板逐对象改回。 */
   curRot = clamp(Math.round(+cfg.cropRot || 0), -180, 180);
@@ -1814,6 +1890,7 @@ function refreshInfo(){
     $("i-fwD").textContent = j.fw || "—";
     $("i-pageD").textContent = j.page || "—";
     $("i-apiD").textContent = j.api != null ? j.api : "—";
+    if (j.api != null) DEV_API = +j.api || 1;
     $("i-panel").textContent = j.panel || "—";
     $("i-ssid").textContent = j.ssid || "—";
     $("i-heap").textContent = j.heap != null ? (j.heap/1024).toFixed(0) + " KB" : "—";
@@ -1824,6 +1901,10 @@ function refreshInfo(){
     $("conn").classList.toggle("ok", ok);
     if (j.panel) PANEL.name = j.panel;
     if (j.panel === "A1") PANEL.id = 1; else if (j.panel === "A1.1") PANEL.id = 2; else PANEL.id = 0;
+    /* 设备实际在用的 A1 驱动模式决定帧几何（旧固件无 a1_mode -> 恒 768x552）。 */
+    if (j.a1_mode != null) A1MODE = clamp(+j.a1_mode || 3, 1, A1MODE_MAX);
+    if (applyPanelGeom(PANEL.id, A1MODE)) onGeomChanged();
+    syncPanelRows();
   }).catch(function(){ $("conn").textContent = LOCAL_PREVIEW ? "本地预览（未连设备）" : "未连接"; });
 }
 function loadSettings(){
@@ -1834,8 +1915,11 @@ function loadSettings(){
     $("apPass").placeholder = s.pass_set ? "已设置（留空则不修改）" : "留空 = 开放";
     $("panelSel").value = String(s.panel);
     $("a11Sel").value = String(s.a11_var || 1);
+    if (s.a1_mode != null) A1MODE = clamp(+s.a1_mode || 3, 1, A1MODE_MAX);
+    $("a1Sel").value = String(A1MODE);
     $("wifiPwrSel").value = String(s.wifi_pwr || 0);
-    syncA11Rows();
+    syncPanelRows();
+    if (applyPanelGeom(+s.panel, A1MODE)) onGeomChanged();
     $("hflip").checked = !!s.hflip;
   }).catch(function(){});
 }
@@ -1864,18 +1948,38 @@ $("saveAp").addEventListener("click", function(){
     refreshInfo(); loadSettings();
   });
 });
-function syncA11Rows(){
-  var isA11 = $("panelSel").value === "2";
+function syncPanelRows(){
+  var p = $("panelSel").value;
+  var isA11 = (p === "2");
   $("a11Row").style.display = isA11 ? "" : "none";
   $("a11Hint").style.display = isA11 ? "" : "none";
+  /* A1 驱动模式仅对 A1 且固件 api >= 2 时可调（旧固件没有这套写入路径）。 */
+  var showA1 = (p === "1") && (DEV_API >= 2);
+  $("a1Row").style.display = showA1 ? "" : "none";
+  $("a1Hint").style.display = showA1 ? "" : "none";
 }
-$("panelSel").addEventListener("change", syncA11Rows);
+/* 编辑空间几何切换后的重排：画布尺寸 / 对象手柄 / 预览全部跟着换。 */
+function onGeomChanged(){
+  liveBase = null;
+  try { prevEl.width = EW; prevEl.height = EH; } catch(e){}
+  try { layoutObjs(); } catch(e){}
+  schedulePreview(false);
+}
+$("panelSel").addEventListener("change", syncPanelRows);
 $("savePanel").addEventListener("click", function(){
-  var fields = { panel: $("panelSel").value, hflip: $("hflip").checked ? 1 : 0 };
-  if ($("panelSel").value === "2") fields.a11_var = $("a11Sel").value;
+  var p = $("panelSel").value;
+  var fields = { panel: p, hflip: $("hflip").checked ? 1 : 0 };
+  if (p === "2") fields.a11_var = $("a11Sel").value;
+  if (p === "1") {
+    if (DEV_API >= 2) fields.a1_mode = $("a1Sel").value;
+    else msg("当前固件不支持 A1 驱动模式（api 1），请先升级固件；本次仍按 768×552 渲染", "err");
+  }
   postSettings(fields, function(){
-    msg("屏幕设置已保存", "ok");
-    PANEL.id = +$("panelSel").value;
+    PANEL.id = +p;
+    if (p === "1" && DEV_API >= 2) A1MODE = clamp(+$("a1Sel").value, 1, A1MODE_MAX);
+    var changed = applyPanelGeom(PANEL.id, A1MODE);
+    if (changed) onGeomChanged();
+    msg(changed ? ("屏幕设置已保存（编辑画布 " + EW + "×" + EH + "）") : "屏幕设置已保存", "ok");
     refreshInfo();
   });
 });

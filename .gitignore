@@ -9,6 +9,7 @@ sdkconfig.old
 *.elf
 *.map
 *.zip
+unpacked/
 releases/
 # flash_kit 是一键刷机工具包，bin 是其内容，保留入库
 !flash_kit/*.bin

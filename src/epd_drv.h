@@ -11,14 +11,14 @@
  *
  * 两种拆机屏运行时切换（无需重刷）：
  *   A0 - 768 x 552，隔行半屏 Y 映射（已在真机验证）
- *   A1 - 768 x 552，整窗线性写入 + 完整 JD79665 式初始化
- *        （原 eink-frame 项目称 A1L，重构后统一改名为 A1）。
- *        移植自 InkSight_adapt_HUAWEI_eink firmware/src/epd_driver.cpp
- *        (EPD_PANEL_38_JD79665_BWRY)，华为手机壳 A1 版本。
+ *   A1 - 768 x 552 或 800 x 600（由 a1_mode 决定），完整 JD79665 式初始化，
+ *        单帧一次 0x83 布防。移植自 InkSight_adapt_HUAWEI_eink
+ *        firmware/src/epd_driver.cpp (EPD_PANEL_38_JD79665_BWRY)，华为手机壳
+ *        A1 版本；R1.1.0（FB-010）起按 a1_mode 分四档驱动策略，见
+ *        epd_set_a1_mode()——玻璃可见区与 A0 同为 768x552，但栅极按两 bank
+ *        交错布线，必须交错送行，否则上下半屏互相穿插（条纹/割裂）。
  *
- * 800 x 600 的社区 A1 画像已在旧项目 M6 移除，本重构不再引入。
- *
- * epd_display_2bpp() 期望的帧缓冲布局：
+ * epd_display_2bpp() / epd_display_2bpp_wh() 期望的帧缓冲布局：
  *   行 r 存逻辑行 y = H-1-r（缓冲自下而上存储），
  *   每字节 4 像素、MSB 优先，像素 x 在位 (6 - 2*(x%4))，
  *   色码 0x00=黑 0x01=白 0x02=黄 0x03=红（A0 实测）。
@@ -41,14 +41,17 @@ typedef struct {
 
 extern const epd_profile_t EPD_PROFILES[EPD_PANEL_COUNT];
 
-/* 两种画像都是 768x552，静态帧缓冲精确按此尺寸分配。 */
-#define EPD_MAX_W         768
-#define EPD_MAX_H         552
-#define EPD_MAX_BUF_LEN   (EPD_MAX_W / 4 * EPD_MAX_H)   /* 105984 */
+/* 静态帧缓冲按最大的合法载荷分配：A1 原生帧 800x600/4 = 120000 字节；
+   A0 / A1.1 / A1 交错帧（768x552 = 105984）用同一块缓冲的前段。 */
+#define EPD_MAX_W         800
+#define EPD_MAX_H         600
+#define EPD_MAX_BUF_LEN   (EPD_MAX_W / 4 * EPD_MAX_H)   /* 120000 */
 #define EPD_A0_W          768
 #define EPD_A0_H          552
-#define EPD_A1_W          768
+#define EPD_A1_W          768       /* A1 交错帧（a1_mode 3/4）：页面契约 768x552 */
 #define EPD_A1_H          552
+#define EPD_A1N_W         800       /* A1 原生画像（a1_mode 1/2）：TRES 与帧 800x600 */
+#define EPD_A1N_H         600
 
 /*
  * 引脚映射（R 系列：RST 自旧项目 GPIO2 改到 GPIO3）
@@ -95,6 +98,37 @@ epd_panel_t epd_get_panel(void);
 void epd_set_a11_variant(uint8_t v);
 uint8_t epd_get_a11_variant(void);
 
+/*
+ * A1 屏驱动模式（仅 EPD_PANEL_A1 生效，其他画像忽略）。四档的差别只在
+ * 「帧几何 + TRES 宽度 + 源行→栅极映射 + 行内变换」这四件事的组合：
+ *
+ *   1 NATIVE       方案A   帧/TRES/窗口均 800x600 原生，逐行顺序直写（栅极号=行号）。
+ *                          页面按 600x800 竖屏原生渲染，不重采样、不填充。
+ *   2 NATIVE_ILV   方案A′  同 1 的帧与几何，行映射改为交错（y=2i / 2i-599）：
+ *                          600 行源数据与 600 条栅极一一对应、不重不漏。
+ *   3 ILV_P1       方案D·相位1  帧 768x552（页面契约不变），TRES 768x600，
+ *                          交错映射 y=2i（i<300）/ 2i-599（i>=300）——与卖家
+ *                          「A1 可用固件」逐项一致，是这块玻璃的 1:1 正解。
+ *   4 ILV_P2       方案D·相位2  同 3，整相位下移一行（y=2i+1 / 2i-598），
+ *                          仅用于真机判定相位方向。
+ *
+ * 说明：本屏可见区就是 768x552（与 A0 外观一致），因此 1/2 两档并不是
+ * 「铺满」，而是把 800x600 画面按可见区裁切（右下各有 48 行 / 32 列落进
+ * 备用栅极与未接源线），保留它们只为对照诊断；3/4 才是与 A0 显示一致的路线。
+ *
+ * 四条路径一律「行内不做变换」（A1 批次源线顺序与 A0 相反；R1.0.8–R1.0.11
+ * 无脑套用 A0 的整行镜像 = FB-010 的左右镜像根因）；设置页勾「左右镜像」
+ * 表示额外叠加一次整行镜像。
+ */
+#define EPD_A1_MODE_NATIVE     1
+#define EPD_A1_MODE_NATIVE_ILV 2
+#define EPD_A1_MODE_ILV_P1     3
+#define EPD_A1_MODE_ILV_P2     4
+#define EPD_A1_MODE_DEFAULT    EPD_A1_MODE_ILV_P1
+
+void epd_set_a1_mode(uint8_t v);
+uint8_t epd_get_a1_mode(void);
+
 /* 当前画像（永不为 NULL）。 */
 const epd_profile_t *epd_profile(void);
 
@@ -114,6 +148,17 @@ bool epd_get_hflip(void);
  * `frame` 必须为 epd_profile()->buf_len 字节。成功返回 0。
  */
 int epd_display_2bpp(const uint8_t *frame);
+
+/* 同 epd_display_2bpp()，但显式给出本帧几何（页面可发 768x552 或 800x600）。 */
+int epd_display_2bpp_wh(const uint8_t *frame, uint16_t w, uint16_t h);
+
+/*
+ * 校验帧几何是否被当前画像 / 模式接受。
+ *   A0 / A1.1：只接受自身画像尺寸；
+ *   A1       ：768x552 与 800x600 都收（前者给 a1_mode 3/4 与旧页面，
+ *              后者给 a1_mode 1/2 与新页面），载荷长度必须与几何自洽。
+ */
+bool epd_frame_geom_ok(uint16_t w, uint16_t h, uint32_t len);
 
 /*
  * 残影清理：整屏填单色并刷新 `cycles` 次（黑/白交替）。

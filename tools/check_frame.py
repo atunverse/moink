@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-check_frame.py —— 帧契约金标准测试（api = 1）。
+check_frame.py —— 帧契约金标准测试（api = 2：768x552 与 A1 原生 800x600 两种载荷）。
 
 独立实现三样东西，与固件 frame.c / 页面 crc16() 交叉核对：
   1. CRC-16/CCITT-FALSE（poly 0x1021，init 0xFFFF，无反射、无终异或）
@@ -25,11 +25,11 @@ def crc16(data):
     return crc
 
 
-def frame_header(panel, w, h, payload):
+def frame_header(panel, w, h, payload, ver=1):
     crc = crc16(payload)
     L = len(payload)
     return bytes([
-        0xA5, 0x5A, 1, panel,
+        0xA5, 0x5A, ver, panel,
         (w >> 8) & 0xFF, w & 0xFF,
         (h >> 8) & 0xFF, h & 0xFF,
         (L >> 24) & 0xFF, (L >> 16) & 0xFF, (L >> 8) & 0xFF, L & 0xFF,
@@ -95,6 +95,24 @@ def main():
         ok = False
     else:
         print("OK: packIdx 180-degree placement")
+
+    # 5. R1.1.0（FB-010）：A1 原生 800x600 载荷与版本 2 帧头
+    w2, h2 = 800, 600
+    for col, byte in expect.items():
+        idx2 = [col] * (w2 * h2)
+        p2 = pack_idx(idx2, w2, h2)
+        assert len(p2) == (w2 // 4) * h2 == 120000, "wrong native buffer length"
+        assert all(b == byte for b in p2), "native solid colour %d packed wrong" % col
+    print("OK: packIdx native 800x600 solid colours + 120000-byte buffer")
+
+    pay2 = bytes(120000)
+    hdr2 = frame_header(1, w2, h2, pay2, ver=2)
+    assert hdr2[2] == 2 and hdr2[3] == 1, "native frame version/panel wrong"
+    assert (hdr2[4] << 8 | hdr2[5]) == 800 and (hdr2[6] << 8 | hdr2[7]) == 600
+    L2 = (hdr2[8] << 24) | (hdr2[9] << 16) | (hdr2[10] << 8) | hdr2[11]
+    assert L2 == 120000, "native payload length field wrong"
+    assert (hdr2[12] << 8 | hdr2[13]) == crc16(pay2)
+    print("OK: native frame header v2 (800x600 / 120000)")
 
     print("RESULT:", "PASS" if ok else "FAIL")
     return PASS if ok else FAIL

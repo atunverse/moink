@@ -14,6 +14,7 @@ static const moink_settings_t DEFAULTS = {
     .panel    = EPD_PANEL_A0,
     .hflip    = 0,
     .a11_var  = 1,
+    .a1_mode  = EPD_A1_MODE_DEFAULT,
     .wifi_pwr = SETT_WIFI_PWR_HIGH,
     .sleep_s  = SETT_SLEEP_3MIN,
     .wake_s   = SETT_WAKE_OFF,
@@ -61,14 +62,17 @@ void settings_init(void)
     read_u8("panel",   &s_cfg.panel);
     read_u8("hflip",   &s_cfg.hflip);
     read_u8("a11_var", &s_cfg.a11_var);
+    read_u8("a1_mode",  &s_cfg.a1_mode);
+    if (s_cfg.a1_mode < EPD_A1_MODE_NATIVE || s_cfg.a1_mode > EPD_A1_MODE_ILV_P2)
+        s_cfg.a1_mode = EPD_A1_MODE_DEFAULT;
     read_u8("wifi_pwr", &s_cfg.wifi_pwr);
     read_u32("sleep_s", &s_cfg.sleep_s);
     read_u32("wake_s",  &s_cfg.wake_s);
     read_str("ap_ssid", s_cfg.ap_ssid, SETT_SSID_MAX);
     read_str("ap_pass", s_cfg.ap_pass, SETT_PASS_MAX);
 
-    ESP_LOGI(TAG, "panel=%u hflip=%u sleep=%lus wake=%lus ssid='%s' open=%d",
-             s_cfg.panel, s_cfg.hflip,
+    ESP_LOGI(TAG, "panel=%u hflip=%u a1_mode=%u sleep=%lus wake=%lus ssid='%s' open=%d",
+             s_cfg.panel, s_cfg.hflip, s_cfg.a1_mode,
              (unsigned long)s_cfg.sleep_s, (unsigned long)s_cfg.wake_s,
              s_cfg.ap_ssid[0] ? s_cfg.ap_ssid : "(default)",
              s_cfg.ap_pass[0] == 0);
@@ -123,6 +127,15 @@ esp_err_t settings_set_a11_var(uint8_t v)
     return ESP_OK;
 }
 
+esp_err_t settings_set_a1_mode(uint8_t v)
+{
+    if (v < EPD_A1_MODE_NATIVE || v > EPD_A1_MODE_ILV_P2) v = EPD_A1_MODE_DEFAULT;
+    s_cfg.a1_mode = v;
+    store_u8("a1_mode", v);
+    settings_commit();
+    return ESP_OK;
+}
+
 esp_err_t settings_set_wifi_pwr(uint8_t v)
 {
     if (v > SETT_WIFI_PWR_LOW) return ESP_ERR_INVALID_ARG;
@@ -170,7 +183,8 @@ void settings_factory_reset(void)
     /* 只清「设置类」键；web_len/web_crc/page_ver（页面热更标记）保留——
        页面热更是系统资产而非用户数据，恢复出厂后无需重新上传页面
        （旧实现 nvs_erase_all 连页面标记一起擦，导致回退内嵌页）。 */
-    static const char *KEYS[] = { "panel", "hflip", "a11_var", "wifi_pwr", "sleep_s", "wake_s", "ap_ssid", "ap_pass" };
+    static const char *KEYS[] = { "panel", "hflip", "a11_var", "a1_mode", "wifi_pwr",
+                                  "sleep_s", "wake_s", "ap_ssid", "ap_pass" };
     if (s_ok) {
         for (int i = 0; i < (int)(sizeof(KEYS) / sizeof(KEYS[0])); i++)
             nvs_erase_key(s_nvs, KEYS[i]);

@@ -166,11 +166,11 @@ static esp_err_t info_handler(httpd_req_t *req)
 
     int n = snprintf(buf, sizeof(buf),
         "{\"fw\":\"%s\",\"page\":\"%s\",\"api\":%d,"
-        "\"panel\":\"%s\",\"heap\":%lu,\"bat_mv\":%d,"
+        "\"panel\":\"%s\",\"a1_mode\":%u,\"heap\":%lu,\"bat_mv\":%d,"
         "\"sleep_s\":%lu,\"wake_s\":%lu,\"clients\":%d,"
         "\"ssid\":\"%s\",\"uptime\":%lld}",
         MOINK_FW_VERSION, ota_web_page_version(), MOINK_API_VERSION,
-        epd_panel_name((epd_panel_t)s->panel),
+        epd_panel_name((epd_panel_t)s->panel), (unsigned)s->a1_mode,
         (unsigned long)esp_get_free_heap_size(), power_battery_mv(),
         (unsigned long)s->sleep_s, (unsigned long)s->wake_s,
         netif_ap_client_count(), netif_ap_ssid(),
@@ -187,12 +187,12 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
 {
     power_activity();
     const moink_settings_t *s = settings_get();
-    char buf[256];
+    char buf[384];
 
     snprintf(buf, sizeof(buf),
-        "{\"panel\":%u,\"hflip\":%u,\"a11_var\":%u,\"wifi_pwr\":%u,\"sleep_s\":%lu,\"wake_s\":%lu,"
-        "\"ssid\":\"%s\",\"pass_set\":%s}",
-        s->panel, s->hflip, s->a11_var, s->wifi_pwr,
+        "{\"panel\":%u,\"hflip\":%u,\"a11_var\":%u,\"a1_mode\":%u,\"wifi_pwr\":%u,"
+        "\"sleep_s\":%lu,\"wake_s\":%lu,\"ssid\":\"%s\",\"pass_set\":%s}",
+        s->panel, s->hflip, s->a11_var, s->a1_mode, s->wifi_pwr,
         (unsigned long)s->sleep_s, (unsigned long)s->wake_s,
         s->ap_ssid, s->ap_pass[0] ? "true" : "false");
 
@@ -221,6 +221,11 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     if (kv_get(body, "a11_var", v, sizeof(v))) {
         settings_set_a11_var((uint8_t)atoi(v));
         epd_set_a11_variant(settings_get()->a11_var);
+    }
+    if (kv_get(body, "a1_mode", v, sizeof(v))) {
+        settings_set_a1_mode((uint8_t)atoi(v));
+        /* 模式会改 A1 的画像几何（800x600 原生 ↔ 768x552 交错），立即生效。 */
+        epd_set_a1_mode(settings_get()->a1_mode);
     }
     if (kv_get(body, "wifi_pwr", v, sizeof(v))) {
         settings_set_wifi_pwr((uint8_t)atoi(v));
@@ -412,6 +417,7 @@ void app_main(void)
     }
     epd_set_panel((epd_panel_t)settings_get()->panel);
     epd_set_a11_variant(settings_get()->a11_var);
+    epd_set_a1_mode(settings_get()->a1_mode);
     epd_set_hflip(settings_get()->hflip != 0);
 
     frame_init();

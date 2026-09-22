@@ -6,10 +6,11 @@
 #include <stdint.h>
 
 /*
- * 帧格式 v1（api = 1）：16 字节头（大端）+ 2bpp 载荷。
+ * 帧格式 v1/v2（api = 2）：16 字节头（大端）+ 2bpp 载荷。字段与偏移不变，
+ * 只有 hdr[2] 与载荷几何在 v2 上扩展：
  *
  *   偏移 0-1   魔数 0xA5 0x5A
- *   偏移 2     格式版本 = 1
+ *   偏移 2     格式版本：1 = 768x552 载荷；2 = A1 原生 800x600 载荷
  *   偏移 3     面板类型（0=A0 / 1=A1，信息性字段）
  *   偏移 4-5   宽（BE）
  *   偏移 6-7   高（BE）
@@ -17,14 +18,16 @@
  *   偏移 12-13 CRC16/CCITT-FALSE（poly 0x1021, init 0xFFFF，载荷字节）
  *   偏移 14-15 保留（0）
  *
- * 载荷为 768x552 的 2bpp 位图，105984 字节，MSB 优先、行自下而上（180° 契约，
- * 与 epd_drv.c 完全一致）。整帧上传，无局部刷新。
+ * 载荷为 2bpp 位图（MSB 优先、行自下而上 = 180° 契约，与 epd_drv.c 一致），
+ * 长度为 宽/4*高：768x552 → 105984；800x600 → 120000。
+ * 固件按 hdr 里的宽高判定布局，两种几何都接受（见 epd_frame_geom_ok）。
  */
 
 #define FRAME_HDR_LEN    16
 #define FRAME_MAGIC0     0xA5
 #define FRAME_MAGIC1     0x5A
-#define FRAME_FMT_VERSION 1
+#define FRAME_FMT_VERSION 1          /* 基础格式（768x552 载荷） */
+#define FRAME_FMT_VERSION_NATIVE 2   /* A1 原生 800x600 载荷 */
 
 /* 分配帧缓冲并创建同步量。 */
 void frame_init(void);
