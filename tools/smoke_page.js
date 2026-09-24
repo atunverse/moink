@@ -1,7 +1,8 @@
 // smoke_page.js —— 页面冒烟测试（Node）。
 // 抽取 page/index.html 主脚本的纯函数段（算法 + 打包 + 帧头），在最小 sandbox 里跑断言。
 // 覆盖：CRC16 金标准、帧头 16 字节字段、packIdx 纯色打包、
-//       R1.0.12 结构（Cropper 内嵌 / 文字对象 / 留白 / 双 script 闭合符）。
+//       R1.0.12 结构（Cropper 内嵌 / 文字对象 / 留白 / 双 script 闭合符）、
+//       R1.2.0 统一升级入口（/api/upload）+ 单一版本号显示。
 //
 // 用法：node tools/smoke_page.js   （tools/ 下已有 package.json 声明 commonjs）
 "use strict";
@@ -144,14 +145,18 @@ ok("wrap handle h-w (left-bottom) + red delete handle h-del",
 }
 ok("portrait migration (m16rot)", js.indexOf("cfg.m16rot") >= 0);
 
-// R1.1.0（FB-010）：A1 四档驱动模式 + 编辑空间几何随模式切换
-// R1.1.1（FB-011/FB-012）：档位文案精简 + a1Hint 移除 + DEV_API 三态 + OTA 同步页面
-ok("R1.1.1 A1 drive mode UI (a1Row/a1Sel, a1Hint removed)",
+// R1.1.0（FB-010）：A1 驱动模式 + 编辑空间几何随模式切换
+// R1.1.1（FB-011/FB-012）：已删 a1Hint + DEV_API 三态 + OTA 同步页面
+// R1.1.2（FB-013）：真机定案后 A1 收敛为两档（768x552 顺序默认 / 800x600 对照）
+ok("R1.1.2 A1 drive mode UI (a1Row/a1Sel, a1Hint removed)",
    page.includes('id="a1Row"') && page.includes('id="a1Sel"') && page.indexOf("a1Hint") < 0);
-ok("R1.1.1 A1 options simplified (no trailing notes)",
-   page.includes(">方案D 相位1</option>") && page.includes(">方案D 相位2</option>")
-   && page.indexOf("与卖家固件同映射") < 0 && page.indexOf("（相位对照）") < 0
-   && page.indexOf("· 顺序（诊断）") < 0 && page.indexOf("· 交错（诊断）") < 0);
+ok("R1.1.2 A1 options reduced to exactly two",
+   page.includes('<option value="1">768×552 顺序</option>')
+   && page.includes('<option value="2">方案A 原生800×600</option>')
+   && page.indexOf("方案D 相位1") < 0 && page.indexOf("方案D 相位2") < 0
+   && page.indexOf("方案A′") < 0 && page.indexOf("A1MODE_MAX = 4") < 0);
+ok("R1.1.2 A1MODE default = 1 / max = 2",
+   js.indexOf("var A1MODE = 1;") >= 0 && js.indexOf("var A1MODE_MAX = 2;") >= 0);
 ok("R1.1.1 geometry helpers",
    js.indexOf("function panelGeomOf") >= 0 && js.indexOf("function applyPanelGeom") >= 0
    && js.indexOf("function migrateGeomTo") >= 0 && js.indexOf("function onGeomChanged") >= 0);
@@ -161,24 +166,90 @@ ok("R1.1.1 DEV_API tri-state + apiAtLeast2()",
    && js.indexOf("DEV_API === 0 || DEV_API >= 2") >= 0);
 ok("R1.1.0 a1_mode saved with panel",
    js.indexOf('fields.a1_mode = $("a1Sel").value') >= 0 && js.indexOf("syncPanelRows") >= 0);
-ok("R1.1.1 OTA sync-page checkbox + query param",
-   page.includes('id="fwSyncPage"') && js.indexOf('$("fwSyncPage").checked ? "?sync_page=1"') >= 0);
+// R1.2.0（FB-015）：版本号由 fw/page 两套合并为 MOINK_VERSION 一套；
+//   固件与控制页合并到同一入口 /api/upload，由固件按请求体首块内容嗅探分流。
+ok("R1.2.0 统一升级入口 UI (upFile/upGo/upmsg)",
+   page.includes('id="upFile"') && page.includes('id="upGo"')
+   && page.includes('class="savestate" id="upmsg"')
+   && page.includes('accept=".bin,.html,.htm"') && page.includes('id="webClear"'));
+ok("R1.2.0 旧的两个入口与同步复选框已删",
+   page.indexOf('id="fwFile"') < 0 && page.indexOf('id="fwGo"') < 0
+   && page.indexOf('id="webFile"') < 0 && page.indexOf('id="webGo"') < 0
+   && page.indexOf("fwSyncPage") < 0 && page.indexOf("sync_page") < 0);
+ok("R1.2.0 单一入口常量 + 无旧路由残留",
+   js.indexOf('var UP_URL = "http://192.168.4.1/api/upload";') >= 0
+   && js.indexOf("OTA_URL") < 0 && js.indexOf('"/api/ota"') < 0
+   && page.indexOf('"/api/ota"') < 0);
+ok("R1.2.0 双端同规则嗅探 (sniffKind + readHead, 固件 0xE9 / 页面 <!doctype)",
+   js.indexOf("function sniffKind(bytes)") >= 0
+   && js.indexOf("function readHead(file, cb)") >= 0
+   && js.indexOf("bytes[0] === 0xE9") >= 0
+   && js.indexOf('head.indexOf("<!doctype")') >= 0
+   && js.indexOf("改 sniffKind() 必须同步改 src/ota_web.c 的 sniff_kind()") >= 0);
+ok("R1.2.0 固件重启导致响应可能收不到 -> sentAll 兜底",
+   js.indexOf("var sentAll = false") >= 0 && js.indexOf("if (isFw && sentAll)") >= 0);
+// R1.1.3（FB-014）：设置项就地保存状态（不再依赖图片页里不可见的 #msg）+ 保存后回读核对
+ok("R1.1.3 就地状态位 3 处 (sleepmsg/apmsg/panelmsg)",
+   page.indexOf('class="savestate" id="sleepmsg"') >= 0
+   && page.indexOf('id="apmsg"') >= 0 && page.indexOf('id="panelmsg"') >= 0
+   && page.indexOf('id="sleepmsg" style="margin:0"') < 0);
+ok("R1.1.3 就地状态助手 (saveState/readSettings/verifyFields)",
+   js.indexOf("function saveState(id, kind, text)") >= 0
+   && js.indexOf("function readSettings(cb)") >= 0
+   && js.indexOf("function verifyFields(fields, cb)") >= 0);
+ok("R1.1.3 保存后回读 /api/settings 逐字段核对（不轻信 HTTP 200）",
+   js.indexOf('fetch(api("/api/settings?t=" + Date.now()))') >= 0
+   && js.indexOf("badLabel(bad)") >= 0 && js.indexOf("SETT_LABEL") >= 0);
+ok("R1.1.3 失败/未生效/没收到应答都有明确提示",
+   js.indexOf('"✗ 保存失败：设备返回 "') >= 0 && js.indexOf('"✗ 未生效："') >= 0
+   && js.indexOf('"⚠ 没收到应答：') >= 0);
+ok("R1.1.3 本地预览不谎报网络异常（且照常切档预览）",
+   js.indexOf("if (LOCAL_PREVIEW){") >= 0
+   && js.indexOf("本地预览（未连设备）：只在本页生效") >= 0);
+ok("R1.1.3 旧的静默提示路径已移除",
+   page.indexOf('msg("保存失败", "err")') < 0 && page.indexOf('msg("网络错误", "err")') < 0);
+ok("R1.2.0 热点密码单字段语义（留空=保持 / 勾选清除=开放，FB-014①）",
+   page.indexOf("留空 = 保持当前密码") >= 0 && page.indexOf('id="apClearPw"') >= 0
+   && page.indexOf("留空 = 清除密码") < 0 && page.indexOf("留空则不修改") < 0);
+ok("R1.2.0 热点保存按需携带 pass（缺省不发送 = 固件保持）",
+   js.indexOf('if ($("apClearPw").checked) fields.pass = "";') >= 0
+   && js.indexOf('else if ($("apPass").value) fields.pass = $("apPass").value;') >= 0);
+ok("R1.2.0 版本 meta", page.indexOf('content="R1.2.0"') >= 0);
 // DEV_API 三态行为：0 = 未连设备（离线乐观） / 1 = 旧固件（收紧） / 2 = 新固件
+// R1.1.2（FB-013）：mode 1 = 768x552 顺序（默认正解，任何 api 下都是 768x552）；
+//                   mode 2 = 方案A 原生 800x600（需 api>=2，离线按可用乐观）。
 sandbox.DEV_API = 0;
-eq("R1.1.1 panelGeomOf offline(0) + mode A -> native 800x600",
-   sandbox.panelGeomOf(1, 1).w + "x" + sandbox.panelGeomOf(1, 1).h, "800x600");
-eq("R1.1.1 panelGeomOf offline(0) + mode D -> 768x552",
-   sandbox.panelGeomOf(1, 3).w + "x" + sandbox.panelGeomOf(1, 3).h, "768x552");
+eq("R1.1.2 offline(0) + mode 1 (default) -> 768x552",
+   sandbox.panelGeomOf(1, 1).w + "x" + sandbox.panelGeomOf(1, 1).h, "768x552");
+eq("R1.1.2 offline(0) + mode 2 (native800) -> 800x600",
+   sandbox.panelGeomOf(1, 2).w + "x" + sandbox.panelGeomOf(1, 2).h, "800x600");
 sandbox.DEV_API = 1;
-eq("R1.1.1 panelGeomOf legacy api=1 + mode A -> 768x552 (tightened)",
+eq("R1.1.2 legacy api=1 + mode 2 -> 768x552 (tightened)",
+   sandbox.panelGeomOf(1, 2).w + "x" + sandbox.panelGeomOf(1, 2).h, "768x552");
+eq("R1.1.2 legacy api=1 + mode 1 -> 768x552",
    sandbox.panelGeomOf(1, 1).w + "x" + sandbox.panelGeomOf(1, 1).h, "768x552");
 sandbox.DEV_API = 2;
-eq("R1.1.1 panelGeomOf api=2 + mode A -> native 800x600",
-   sandbox.panelGeomOf(1, 1).w + "x" + sandbox.panelGeomOf(1, 1).h, "800x600");
+eq("R1.1.2 api=2 + mode 2 -> native 800x600",
+   sandbox.panelGeomOf(1, 2).w + "x" + sandbox.panelGeomOf(1, 2).h, "800x600");
+eq("R1.1.2 api=2 + mode 1 (default) -> 768x552",
+   sandbox.panelGeomOf(1, 1).w + "x" + sandbox.panelGeomOf(1, 1).h, "768x552");
 sandbox.DEV_API = 0;   /* 还原初态，避免污染后续断言 */
 eq("R1.1.0 panelGeomOf A0 ignores mode", sandbox.panelGeomOf(0, 1).w + "x" + sandbox.panelGeomOf(0, 1).h, "768x552");
 eq("R1.1.0 GEOM_SRC default geometry", sandbox.GEOM_SRC.w + "x" + sandbox.GEOM_SRC.h, "552x768");
 
+ok("R1.2.0 状态栏单版本号 (版本/接口, 无 fw/page 双行)",
+   page.includes('id="i-verD"') && page.includes('id="i-apiD"')
+   && page.indexOf('id="i-fw"') < 0 && page.indexOf('id="i-page"') < 0);
+ok("R1.2.0 热更页落后固件时红字警示 (DEV_FW + verNum + j.ver||j.fw)",
+   js.indexOf('var DEV_FW = "";') >= 0 && js.indexOf("function verNum(v)") >= 0
+   && js.indexOf("var ver = j.ver || j.fw") >= 0
+   && js.indexOf("控制页版本低于固件") >= 0);
+ok("R1.2.0 A1.1 诊断变体 UI 整块删除 (选项/行/字段)",
+   page.indexOf("A1.1") < 0 && page.indexOf('id="a11Sel"') < 0
+   && page.indexOf('id="a11Row"') < 0 && js.indexOf("a11_var") < 0
+   && js.indexOf("a11Sel") < 0);
+ok("R1.2.0 版本号比较按 主*10000+次*100+修订",
+   js.indexOf("+m[1] * 10000 + +m[2] * 100 + +m[3]") >= 0);
 ok("页脚存在 (footer#appFoot)",
    page.indexOf('id="appFoot"') >= 0 && page.indexOf("footer#appFoot") >= 0);
 ok("页脚含 GitHub 地址", page.indexOf('href="https://github.com/atunverse/moink"') >= 0);

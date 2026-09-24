@@ -11,15 +11,15 @@
  *   captive   DNS 劫持 + OS 探测劫持（连上即弹控制页）
  *   frame     帧接收（16B 头 + CRC16 校验）+ 显示触发
  *   power     电池 ADC / 深睡 / 唤醒源 / 空闲休眠
- *   ota_web   OTA 双槽 + 页面热更（web 分区）
+ *   ota_web   OTA 双槽 + 控制页热更（web 分区）+ 统一升级入口
  *
  * 路由：
  *   GET  /                控制页（web 分区优先，否则内嵌页）
- *   GET  /api/info        状态（版本 / 面板 / 堆 / 电量 / 客户端数）
+ *   GET  /api/info        状态（版本 / 接口 / 面板 / 堆 / 电量 / 客户端数）
  *   GET/POST /api/settings 读写设置
  *   POST /api/frame       传图
- *   POST /api/ota         固件升级
- *   POST /api/web         页面热更
+ *   POST /api/upload      ★统一升级入口（自动识别 .bin 固件 / .html 控制页）
+ *   POST /api/web/clear   清除已上传控制页，回退内嵌页
  *   POST /api/clear       残影清理
  *   POST /api/factory     恢复出厂
  */
@@ -47,28 +47,15 @@
 #include "frame.h"
 #include "power.h"
 #include "ota_web.h"
+#include "store.h"
 
-#if MOINK_EMBED_PAGE
-#include "index_html.h"
-#endif
+#include "index_html.h"     /* 由 tools/make_index_header.py 固化，改页必重跑 */
 
 static const char *TAG = "main";
 
 #define HOLD_RESET_S    5          /* 长按恢复出厂 */
 #define HTTPD_STACK     4096
 #define HTTPD_MAX_URI   16
-
-/* MOINK_EMBED_PAGE=OFF 时的占位页（提示上传完整页面）。 */
-#if !MOINK_EMBED_PAGE
-static const char FALLBACK_HTML[] =
-    "<!doctype html><html><head><meta charset=\"utf-8\">"
-    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    "<title>墨印 MoInk</title></head>"
-    "<body style=\"font-family:system-ui;padding:2rem;max-width:30rem;margin:auto\">"
-    "<h2>墨印 · MoInk</h2>"
-    "<p>当前固件未内嵌控制页。请把完整页面通过 <code>POST /api/web</code> 上传到设备。</p>"
-    "</body></html>";
-#endif
 
 /* ---------------- 请求小工具 ---------------- */
 
@@ -147,13 +134,11 @@ static esp_err_t page_handler(httpd_req_t *req)
 
     if (ota_web_has_page()) return ota_web_stream_page(req);
 
-#if MOINK_EMBED_PAGE
+    /* 页面随固件一起更新，浏览器缓存会让人误判「没生效」——必须禁缓存。
+       热更页那条路径在 ota_web_stream_page() 里同样设了 no-store。 */
     httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, (const char *)index_html, index_html_len);
-#else
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    return httpd_resp_send(req, FALLBACK_HTML, sizeof(FALLBACK_HTML) - 1);
-#endif
 }
 
 /* ---------------- /api/info ---------------- */
@@ -164,17 +149,21 @@ static esp_err_t info_handler(httpd_req_t *req)
     const moink_settings_t *s = settings_get();
     char buf[512];
 
+    /* ver = 统一版本号 = 当前生效页面版本（热更页优先，否则等于固件编译号）。
+       fw  = 固件编译进去的号：仅供排障，以及判断「热更控制页是否落后于固件」
+             （ver < fw 时页面给黄色警示），界面只显示 ver。
+       api 仍是帧格式契约号，与发布版本号解耦，页面状态栏另起一行显示。 */
     int n = snprintf(buf, sizeof(buf),
-        "{\"fw\":\"%s\",\"page\":\"%s\",\"api\":%d,"
+        "{\"ver\":\"%s\",\"fw\":\"%s\",\"api\":%d,"
         "\"panel\":\"%s\",\"a1_mode\":%u,\"heap\":%lu,\"bat_mv\":%d,"
         "\"sleep_s\":%lu,\"wake_s\":%lu,\"clients\":%d,"
-        "\"ssid\":\"%s\",\"uptime\":%lld}",
-        MOINK_FW_VERSION, ota_web_page_version(), MOINK_API_VERSION,
+        "\"ssid\":\"%s\",\"uptime\":%lld,\"store_slots\":%d}",
+        ota_web_page_version(), MOINK_VERSION, MOINK_API_VERSION,
         epd_panel_name((epd_panel_t)s->panel), (unsigned)s->a1_mode,
         (unsigned long)esp_get_free_heap_size(), power_battery_mv(),
         (unsigned long)s->sleep_s, (unsigned long)s->wake_s,
         netif_ap_client_count(), netif_ap_ssid(),
-        (long long)(esp_timer_get_time() / 1000000));
+        (long long)(esp_timer_get_time() / 1000000), store_slots());
     if (n < 0 || n >= (int)sizeof(buf)) buf[sizeof(buf) - 1] = '\0';
 
     httpd_resp_set_type(req, "application/json");
@@ -190,14 +179,26 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
     char buf[384];
 
     snprintf(buf, sizeof(buf),
-        "{\"panel\":%u,\"hflip\":%u,\"a11_var\":%u,\"a1_mode\":%u,\"wifi_pwr\":%u,"
+        "{\"panel\":%u,\"hflip\":%u,\"a1_mode\":%u,\"wifi_pwr\":%u,"
         "\"sleep_s\":%lu,\"wake_s\":%lu,\"ssid\":\"%s\",\"pass_set\":%s}",
-        s->panel, s->hflip, s->a11_var, s->a1_mode, s->wifi_pwr,
+        s->panel, s->hflip, s->a1_mode, s->wifi_pwr,
         (unsigned long)s->sleep_s, (unsigned long)s->wake_s,
         s->ap_ssid, s->ap_pass[0] ? "true" : "false");
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, strlen(buf));
+}
+
+/* FB-014②：AP 配置延迟应用 —— 先把 200 应答发回给页面，300ms 后再把新配置
+   应用到热点。改名 / 改密码会立刻踢掉手机连接，若「先应用后应答」，页面大概率
+   收不到 200，成败只能靠回读猜；应答先行后，保存判定走正常成功路径。
+   esp_timer 一次性回调，绝不在 httpd 任务栈里等。 */
+static esp_timer_handle_t s_ap_timer;
+
+static void ap_apply_timer_cb(void *arg)
+{
+    (void)arg;
+    netif_ap_apply();
 }
 
 static esp_err_t settings_post_handler(httpd_req_t *req)
@@ -218,13 +219,9 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
         settings_set_hflip((uint8_t)atoi(v));
         hflip_changed = true;
     }
-    if (kv_get(body, "a11_var", v, sizeof(v))) {
-        settings_set_a11_var((uint8_t)atoi(v));
-        epd_set_a11_variant(settings_get()->a11_var);
-    }
     if (kv_get(body, "a1_mode", v, sizeof(v))) {
         settings_set_a1_mode((uint8_t)atoi(v));
-        /* 模式会改 A1 的画像几何（800x600 原生 ↔ 768x552 交错），立即生效。 */
+        /* 模式会改 A1 的画像几何（768x552 顺序 ↔ 800x600 原生对照），立即生效。 */
         epd_set_a1_mode(settings_get()->a1_mode);
     }
     if (kv_get(body, "wifi_pwr", v, sizeof(v))) {
@@ -238,22 +235,40 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
         settings_set_wake((uint32_t)atoi(v));
     }
 
-    /* 热点凭据：ssid / pass 两个字段一起出现才改，避免半改。 */
+    /* 热点凭据（FB-014①）：单字段可改 —— pass 键缺省 = 保持当前密码，
+       pass 空串 = 清除密码（热点转开放）；ssid 键缺省 = 保持当前热点名。
+       页面据此区分「留空不动」与「勾选清除」。 */
     char ssid[SETT_SSID_MAX], pass[SETT_PASS_MAX];
     bool have_ssid = kv_get(body, "ssid", ssid, sizeof(ssid));
     bool have_pass = kv_get(body, "pass", pass, sizeof(pass));
-    if (have_ssid && have_pass) {
-        settings_set_ap(ssid, pass);
+    if (have_ssid || have_pass) {
+        settings_set_ap(have_ssid ? ssid : NULL, have_pass ? pass : NULL);
         ap_changed = true;
     }
 
     /* 应用到运行时。 */
     if (panel_changed) epd_set_panel((epd_panel_t)settings_get()->panel);
     if (hflip_changed) epd_set_hflip(settings_get()->hflip != 0);
-    if (ap_changed) netif_ap_apply();
 
     httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_sendstr(req, "OK");
+    esp_err_t err = httpd_resp_sendstr(req, "OK");
+
+    /* 应答已发出，再延迟应用 AP 配置（FB-014②）。 */
+    if (ap_changed) {
+        if (!s_ap_timer) {
+            const esp_timer_create_args_t targs = {
+                .callback = &ap_apply_timer_cb,
+                .arg = NULL,
+                .dispatch_method = ESP_TIMER_TASK,
+                .name = "ap_apply",
+            };
+            esp_timer_create(&targs, &s_ap_timer);
+        } else {
+            esp_timer_stop(s_ap_timer);     /* 连续保存：重置 300ms 窗口 */
+        }
+        esp_timer_start_once(s_ap_timer, 300 * 1000);
+    }
+    return err;
 }
 
 /* ---------------- /api/clear / /api/factory ---------------- */
@@ -388,7 +403,7 @@ static void button_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "=== MoInk %s | 4-color | ap + OTA ===", MOINK_FW_VERSION);
+    ESP_LOGI(TAG, "=== MoInk %s | 4-color | ap + unified upgrade ===", MOINK_VERSION);
 
     /* 唤醒原因：GPIO = 按键，TIMER = 定时自动唤醒。 */
     uint32_t wake = power_wakeup_causes();
@@ -411,12 +426,12 @@ void app_main(void)
 
     settings_init();
     power_init();
+    store_init();       /* 轮播存储底座（FB-017 第一部分）：只探测，不写入 */
 
     if (epd_init() != 0) {
         ESP_LOGE(TAG, "EPD init failed");
     }
     epd_set_panel((epd_panel_t)settings_get()->panel);
-    epd_set_a11_variant(settings_get()->a11_var);
     epd_set_a1_mode(settings_get()->a1_mode);
     epd_set_hflip(settings_get()->hflip != 0);
 

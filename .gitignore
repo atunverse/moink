@@ -32,6 +32,7 @@ docs/问题跟踪.md
 # ---- 临时/调试产物 ----
 tools/_*
 !tools/_exif_test.jpg
+!tools/_r110_regress.js
 *.log
 *.tmp
 .DS_Store
@@ -40,6 +41,9 @@ Thumbs.db
 # ---- 标定支线与样张（本地实验，不入库；见 docs/校准方案-FB-002.md）----
 page-calib/
 samples/
+
+# ---- 外部参考资料（大文件 / 第三方版权，不入库）----
+docs/ref/
 
 # ---- Python ----
 __pycache__/

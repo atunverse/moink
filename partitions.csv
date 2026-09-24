@@ -1,13 +1,19 @@
 # Name,   Type, SubType, Offset,   Size,     Flags
 # NOTE: must stay plain ASCII without a UTF-8 BOM (PIO's parser aborts on BOM).
 #
-# MoInk R 系列布局（4 MB flash，恰好填满，沿用 M7 已验证布局，暂不修改）：
-#   nvs/otadata/phy 不变；两个 1.5 MB OTA 应用槽；960 KB 原始 "web" 分区承载页面。
-#   web 分区尺寸由 ota_web.c 运行时读取，切勿硬编码。
-# 删除 STA/拉图后 app 预计远小于 650 KB，槽位冗余充足。
+# MoInk R1.2.0 布局（4 MB flash）—— ★ 本版分区表有变（FB-017 第一部分）：
+#   新增 "store" 原始帧存储分区（轮播存储底座），OTA 槽 1.5M -> 1.25M、
+#   web 960K -> 384K，把余量让给 store 1.0625M。
+#   ★★ 分区表只能靠整包线刷改写 —— 升级到本版必须用 FlashKit 线刷（merged.bin
+#   含新分区表），不能从旧版本 OTA；旧设备 OTA 本包 app.bin 后无 store 分区
+#   （store.c 会告警并报 store_slots=0，其余功能不受影响）。
+#   app 体积 R1.2.0 = 968 KB，1.25M 槽位余量约 35%；web 收窄后仍为页面
+#   （143 KB）的 2.7 倍。web 分区尺寸由 ota_web.c 运行时读取、store 由 store.c
+#   读取，切勿在任何代码里硬编码分区尺寸。
 nvs,      data, nvs,     0x9000,   0x4000,
 otadata,  data, ota,     0xd000,   0x2000,
 phy,      data, phy,     0xf000,   0x1000,
-ota_0,    app,  ota_0,   0x10000,  0x180000,
-ota_1,    app,  ota_1,   0x190000, 0x180000,
-web,      data, spiffs,  0x310000, 0xF0000,
+ota_0,    app,  ota_0,   0x10000,  0x140000,
+ota_1,    app,  ota_1,   0x150000, 0x140000,
+web,      data, spiffs,  0x290000, 0x60000,
+store,    data, spiffs,  0x2f0000, 0x110000,

@@ -13,7 +13,6 @@ static const char *TAG = "settings";
 static const moink_settings_t DEFAULTS = {
     .panel    = EPD_PANEL_A0,
     .hflip    = 0,
-    .a11_var  = 1,
     .a1_mode  = EPD_A1_MODE_DEFAULT,
     .wifi_pwr = SETT_WIFI_PWR_HIGH,
     .sleep_s  = SETT_SLEEP_3MIN,
@@ -61,15 +60,18 @@ void settings_init(void)
 
     read_u8("panel",   &s_cfg.panel);
     read_u8("hflip",   &s_cfg.hflip);
-    read_u8("a11_var", &s_cfg.a11_var);
-    read_u8("a1_mode",  &s_cfg.a1_mode);
-    if (s_cfg.a1_mode < EPD_A1_MODE_NATIVE || s_cfg.a1_mode > EPD_A1_MODE_ILV_P2)
-        s_cfg.a1_mode = EPD_A1_MODE_DEFAULT;
+    read_u8("a1_mode", &s_cfg.a1_mode);
     read_u8("wifi_pwr", &s_cfg.wifi_pwr);
     read_u32("sleep_s", &s_cfg.sleep_s);
     read_u32("wake_s",  &s_cfg.wake_s);
     read_str("ap_ssid", s_cfg.ap_ssid, SETT_SSID_MAX);
     read_str("ap_pass", s_cfg.ap_pass, SETT_PASS_MAX);
+
+    /* R1.2.0：旧值不再做兼容归一；越界一律回落到默认档。 */
+    if (s_cfg.panel >= EPD_PANEL_COUNT) s_cfg.panel = DEFAULTS.panel;
+    if (s_cfg.a1_mode < EPD_A1_MODE_SEQ552 || s_cfg.a1_mode > EPD_A1_MODE_NATIVE800)
+        s_cfg.a1_mode = EPD_A1_MODE_DEFAULT;
+    if (s_cfg.hflip) s_cfg.hflip = 1;
 
     ESP_LOGI(TAG, "panel=%u hflip=%u a1_mode=%u sleep=%lus wake=%lus ssid='%s' open=%d",
              s_cfg.panel, s_cfg.hflip, s_cfg.a1_mode,
@@ -118,18 +120,9 @@ esp_err_t settings_set_hflip(uint8_t v)
     return ESP_OK;
 }
 
-esp_err_t settings_set_a11_var(uint8_t v)
-{
-    if (v < 1 || v > 8) v = 1;
-    s_cfg.a11_var = v;
-    store_u8("a11_var", v);
-    settings_commit();
-    return ESP_OK;
-}
-
 esp_err_t settings_set_a1_mode(uint8_t v)
 {
-    if (v < EPD_A1_MODE_NATIVE || v > EPD_A1_MODE_ILV_P2) v = EPD_A1_MODE_DEFAULT;
+    if (v < EPD_A1_MODE_SEQ552 || v > EPD_A1_MODE_NATIVE800) v = EPD_A1_MODE_DEFAULT;
     s_cfg.a1_mode = v;
     store_u8("a1_mode", v);
     settings_commit();
@@ -166,30 +159,60 @@ esp_err_t settings_set_wake(uint32_t v)
 
 esp_err_t settings_set_ap(const char *ssid, const char *pass)
 {
-    if (!ssid || !pass) return ESP_ERR_INVALID_ARG;
-    if (strlen(ssid) >= SETT_SSID_MAX || strlen(pass) >= SETT_PASS_MAX)
-        return ESP_ERR_INVALID_ARG;
+    /* FB-014①：单字段更新 —— 任一参数为 NULL 表示「保持当前值」；
+       pass 为空串表示清除密码（热点转开放）。两个都给则整体替换。 */
+    if (!ssid && !pass) return ESP_ERR_INVALID_ARG;
 
-    strlcpy(s_cfg.ap_ssid, ssid, SETT_SSID_MAX);
-    strlcpy(s_cfg.ap_pass, pass, SETT_PASS_MAX);
-    store_str("ap_ssid", s_cfg.ap_ssid);
-    store_str("ap_pass", s_cfg.ap_pass);
+    if (ssid) {
+        if (!pass) pass = s_cfg.ap_pass;      /* 只改名字：密码保持不变 */
+        if (strlen(ssid) >= SETT_SSID_MAX || strlen(pass) >= SETT_PASS_MAX)
+            return ESP_ERR_INVALID_ARG;
+        strlcpy(s_cfg.ap_ssid, ssid, SETT_SSID_MAX);
+        strlcpy(s_cfg.ap_pass, pass, SETT_PASS_MAX);
+        store_str("ap_ssid", s_cfg.ap_ssid);
+        store_str("ap_pass", s_cfg.ap_pass);
+    } else {
+        /* 只改密码：热点名保持不变。 */
+        if (strlen(pass) >= SETT_PASS_MAX) return ESP_ERR_INVALID_ARG;
+        strlcpy(s_cfg.ap_pass, pass, SETT_PASS_MAX);
+        store_str("ap_pass", s_cfg.ap_pass);
+    }
     settings_commit();
     return ESP_OK;
 }
 
 void settings_factory_reset(void)
 {
-    /* 只清「设置类」键；web_len/web_crc/page_ver（页面热更标记）保留——
-       页面热更是系统资产而非用户数据，恢复出厂后无需重新上传页面
-       （旧实现 nvs_erase_all 连页面标记一起擦，导致回退内嵌页）。 */
-    static const char *KEYS[] = { "panel", "hflip", "a11_var", "a1_mode", "wifi_pwr",
-                                  "sleep_s", "wake_s", "ap_ssid", "ap_pass" };
+    /* R1.2.0（FB-015）：整个命名空间一起擦 —— 「恢复出厂」就该回到出厂状态。
+       旧实现刻意保留 web_len/web_crc/page_ver（页面热更标记），理由是「页面是
+       系统资产」；现在恢复出厂连热更页面一起清掉、回到内嵌页，才是预期行为。 */
     if (s_ok) {
-        for (int i = 0; i < (int)(sizeof(KEYS) / sizeof(KEYS[0])); i++)
-            nvs_erase_key(s_nvs, KEYS[i]);
+        nvs_erase_all(s_nvs);
         nvs_commit(s_nvs);
     }
     s_cfg = DEFAULTS;
-    ESP_LOGW(TAG, "factory reset: settings cleared (web page kept)");
+    ESP_LOGW(TAG, "factory reset: nvs namespace erased");
+}
+
+void settings_reset_for_upgrade(void)
+{
+    /* 每次固件升级都强制重置设置：旧值不参与兼容（FB-015）。热点名与密码**保留**，
+       否则设备会以默认开放热点出现，用户得重新寻找并重连才能继续用页面。 */
+    static const char *KEYS[] = { "panel", "hflip", "a1_mode",
+                                  "wifi_pwr", "sleep_s", "wake_s" };
+    char ssid[SETT_SSID_MAX], pass[SETT_PASS_MAX];
+    strlcpy(ssid, s_cfg.ap_ssid, sizeof(ssid));
+    strlcpy(pass, s_cfg.ap_pass, sizeof(pass));
+
+    if (s_ok) {
+        for (size_t i = 0; i < sizeof(KEYS) / sizeof(KEYS[0]); i++)
+            nvs_erase_key(s_nvs, KEYS[i]);
+        nvs_commit(s_nvs);
+    }
+
+    s_cfg = DEFAULTS;
+    strlcpy(s_cfg.ap_ssid, ssid, SETT_SSID_MAX);
+    strlcpy(s_cfg.ap_pass, pass, SETT_PASS_MAX);
+    ESP_LOGW(TAG, "upgrade reset: settings cleared, AP credentials kept (ssid='%s')",
+             s_cfg.ap_ssid[0] ? s_cfg.ap_ssid : "(default)");
 }
