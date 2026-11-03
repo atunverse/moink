@@ -220,8 +220,18 @@
  *     /api/carousel/list 与 /full 必须经 store_slot_phys() 换算物理偏移。
  *     api 仍为 2，分区表与帧格式零变动。
  * ────────────────────────────────────────────────────────────────
+ *
+ * R1.3.5 变更（2026-11-03，关机模式定时唤醒修复 + 预览「显示到屏幕」）：
+ *   - 修复超时动作 = 关机时仍被定时唤醒：无自锁电路时释放自锁不会断电、退回深睡，
+ *     旧实现照样按 wake_s 开 RTC 定时唤醒（页面隐藏了该项，但旧值仍在 NVS）。
+ *     现在只有超时动作 = 休眠时才开定时唤醒。
+ *   - 新增 POST /api/carousel/show?slot=N：图库大图预览「显示到屏幕」。只校验并经
+ *     显示队列投 UI_EV_CAROUSEL_SHOW，由 display_task 异步刷屏；越界 404 / 队列满 503。
+ *     显示队列消息带槽号（ui_msg_t）；carousel_next() 改为经 carousel_show() 切图。
+ *     api 仍为 2，分区表与帧格式零变动。
+ * ────────────────────────────────────────────────────────────────
  */
 #define MOINK_API_VERSION   2
-#define MOINK_VERSION       "R1.3.4"
+#define MOINK_VERSION       "R1.3.5"
 
 #endif /* MOINK_VERSION_H */

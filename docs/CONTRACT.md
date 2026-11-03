@@ -2,7 +2,7 @@
 
 > 本文档是**固件与页面之间的唯一权威接口定义**，以及**屏驱动的物理契约**。
 > 改动任何一条必须同步更新 `check_frame.py` / `smoke_page.js` 并全量回归。
-> 版本：version = R1.3.4（固件与控制页共用这一个号），api = 2。
+> 版本：version = R1.3.5（固件与控制页共用这一个号），api = 2。
 
 ---
 
@@ -213,6 +213,8 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
 - **关机实现**：`power_self_lock_off()` 把 GPIO2 拉低，切断 MOS 自锁供电。有自锁电路时
   约 100 ms 掉电、函数不返回；**没有自锁电路（USB 供电 / 未装 MOS）时拉低无效**，
   1 s 后退回深睡。⇒ 关机能力依赖硬件，控制页对此有明确提示。
+  R1.3.5 起这次退回的深睡**不开定时唤醒**：只有 `timeout_action = 0` 时才按 `wake_s`
+  开 RTC 定时唤醒（此前会沿用 NVS 里的 `wake_s` 旧值，选了「关机」仍被定时唤醒）。
 - **定时唤醒切图**：`wake_show = 1`（默认）时，`wake_reason = timer` 的启动会在
   `display_task` 就绪后投递 `UI_EV_CAROUSEL_NEXT`，自动切到下一张；图库为空则无动作。
   该开关只影响定时唤醒；按键唤醒仍走 §5.1 的双击语义。
@@ -232,6 +234,7 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
 | GET | `/api/carousel/list` | 图库列表 JSON：`{slots,count,cur,items[{slot,fmt,w,h,len,data}]}`，`data` = 缩略图 base64（`fmt=2` 为彩色 JPEG，`fmt=1` 为 2bit 帧） |
 | GET | `/api/carousel/full?slot=N` | 整帧二进制（16B 头 + 2bpp 载荷），供网页大图预览；流式读 flash 分块发送 |
 | POST | `/api/carousel/delete?slot=N` | 删除**逻辑槽** N：只清 `alive` 位图对应位 + `count--` / `cur` 修正，**不搬移数据、flash 零擦写**（R1.3.4）。状态码见 §6.2 |
+| POST | `/api/carousel/show?slot=N` | 切到**逻辑槽** N 显示（R1.3.5，大图预览「显示到屏幕」）：只校验并经显示队列投递 `UI_EV_CAROUSEL_SHOW`，**应答不等刷屏**（由 `display_task` 刷屏，**成功才更新 `cur`**；四色屏刷新可达数十秒，页面以 `/api/info` 的 `store_cur` 轮询确认，最多 60 s）。`200 OK` / `400 bad query` / `404 no such slot` / `503 busy`（显示队列满） |
 | POST | **`/api/upload`** | **★ 统一升级入口（R1.2.0，FB-015）**：按请求体首块内容自动识别固件 / 控制页，见 §6.1 |
 | POST | `/api/web/clear` | 清空 web 分区（回到内嵌页） |
 | POST | `/api/clear` | 残影清理（可选 `cycles` 1–4） |

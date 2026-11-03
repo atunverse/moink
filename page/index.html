@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="moink-page-version" content="R1.3.4">
+<meta name="moink-page-version" content="R1.3.5">
 <title>墨印 · MoInk</title>
 <style>
 /* ===== Cropper.js v1.6.2 | MIT | https://github.com/fengyuanchen/cropperjs ===== */
@@ -2320,21 +2320,52 @@ function showPreview(slot){
   }).catch(function(e){ hideWorkLoading(); saveState("caromsg", "err", "预览失败：" + e.message); });
 }
 
-/* 预览窗口「显示到屏幕」：固件只校验并排队，刷屏异步进行（2~4 s），
-   因此稍后再刷新图库，让「当前」高亮跟上设备。 */
+/* 预览窗口「显示到屏幕」：固件只校验并排队，刷屏异步进行，**刷屏成功后才更新 cur**。
+   四色屏整屏刷新远不止 2~4 s（驱动超时留到 45 s），固定延时刷新图库会拿到旧 cur，
+   「当前」高亮不动。改为轮询 /api/info 的 store_cur（比 list 轻，不带缩略图），
+   等到目标张再刷新图库；最多 60 s，有界轮询不会让设备永不休眠。
+   showSeq：连点另一张时作废上一轮轮询。 */
+var showSeq = 0;
+function waitSlotShown(slot){
+  var seq = ++showSeq, t0 = Date.now();
+  /* 预览窗口可能已换成别的图：提示只写给仍在预览这张的窗口，图库照常刷新 */
+  function say(kind, text){ if (prevSlot === slot) saveState("prevmsg", kind, text); }
+  function next(){
+    if (seq !== showSeq) return;
+    if (Date.now() - t0 > 60000){
+      say("warn", "⚠ 60 秒内未确认屏幕已切换，请看屏幕");
+      refreshGallery();
+      return;
+    }
+    setTimeout(poll, 2000);
+  }
+  function poll(){
+    if (seq !== showSeq) return;
+    fetch(api("/api/info?t=" + Date.now())).then(function(r){ return r.json(); }).then(function(j){
+      if (seq !== showSeq) return;
+      if (+j.store_cur === slot){
+        say("ok", "✓ 屏幕已显示这张");
+        refreshGallery();
+        return;
+      }
+      next();
+    }).catch(next);
+  }
+  setTimeout(poll, 2000);
+}
 function showSlotOnDevice(){
   if (caroBusy || prevSlot < 0) return;
-  var btn = $("prevShow");
+  var btn = $("prevShow"), slot = prevSlot;
   btn.disabled = true;
   saveState("prevmsg", "busy", "正在发送…");
-  fetch(api("/api/carousel/show?slot=" + prevSlot), { method: "POST" }).then(function(r){
+  fetch(api("/api/carousel/show?slot=" + slot), { method: "POST" }).then(function(r){
     return r.text().then(function(t){
       return { ok: r.status === 200, status: r.status, body: t };
     });
   }).then(function(x){
     if (x.ok){
-      saveState("prevmsg", "ok", "✓ 已发送到屏幕，刷新中（约 2~4 秒）");
-      setTimeout(refreshGallery, 4500);
+      saveState("prevmsg", "busy", "已发送到屏幕，正在刷新…");
+      waitSlotShown(slot);
     } else if (x.status === 404 && /no such slot/.test(x.body)){
       saveState("prevmsg", "err", "这张图已不在（可能已被删除），请关闭预览后重试");
       refreshGallery();
