@@ -104,6 +104,40 @@ static const char *wake_src_name(wake_src_t s)
     }
 }
 
+/* ---------------- 显示事件队列（R1.3.2） ----------------
+   按键等触发源只负责「投事件」，刷屏统一由 display_task 串行执行。
+   这样按键采样不会被 2~4 s 的整屏刷新阻塞（长按计时才准），
+   后续新增其它刷屏触发源（定时轮播、页面按钮、传感器等）
+   也只需 ui_post() 一个事件，不必碰按键逻辑。 */
+typedef enum {
+    UI_EV_CAROUSEL_NEXT = 0,     /* 切到下一张轮播 */
+    UI_EV_CAROUSEL_SHOW,         /* 切到指定一张（页面预览窗口「显示到屏幕」） */
+} ui_event_t;
+
+typedef struct {
+    ui_event_t ev;
+    int        slot;             /* 仅 UI_EV_CAROUSEL_SHOW 使用 */
+} ui_msg_t;
+
+static QueueHandle_t s_ui_q = NULL;
+
+/* 投递成功返回 true；队列未建或已满返回 false（事件被丢弃）。 */
+static bool ui_post_msg(ui_event_t ev, int slot)
+{
+    if (!s_ui_q) return false;
+    ui_msg_t m = { .ev = ev, .slot = slot };
+    if (xQueueSend(s_ui_q, &m, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "ui queue full, drop event %d", (int)ev);
+        return false;
+    }
+    return true;
+}
+
+static void ui_post(ui_event_t ev)
+{
+    ui_post_msg(ev, -1);
+}
+
 /* ---------------- 请求小工具 ---------------- */
 
 static void url_decode(char *s)
@@ -626,6 +660,38 @@ static esp_err_t carousel_full_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* POST /api/carousel/show?slot=N：切到第 N 张（页面大图预览里的「显示到屏幕」）。
+   只校验并投事件，刷屏由 display_task 异步执行（2~4 s），应答不等刷屏完成。
+   越界 404 / 显示队列满 503。 */
+static esp_err_t carousel_show_handler(httpd_req_t *req)
+{
+    power_activity();
+    char qbuf[40], vs[8];
+    if (httpd_req_get_url_query_len(req) <= 0 ||
+        httpd_req_get_url_query_len(req) >= (int)sizeof(qbuf) ||
+        httpd_req_get_url_query_str(req, qbuf, sizeof(qbuf)) != ESP_OK ||
+        !kv_get(qbuf, "slot", vs, sizeof(vs)))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad query");
+    int slot = atoi(vs);
+
+    int count = 0, cur = 0;
+    store_meta_get(&count, &cur);
+    if (slot < 0 || slot >= count) {
+        ESP_LOGW(TAG, "show: slot %d 越界（count=%d，前端索引可能已过期）",
+                 slot, count);
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no such slot");
+    }
+
+    if (!ui_post_msg(UI_EV_CAROUSEL_SHOW, slot)) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_sendstr(req, "busy");
+    }
+
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "OK");
+}
+
 /* R1.2.2：改 GPIO 后由页面调用 —— SPI 总线与 ADC 通道只能在启动时按引脚
    初始化，因此引脚生效的唯一途径是重启。先应答再重启，避免页面收不到 200。 */
 static esp_err_t reboot_handler(httpd_req_t *req)
@@ -683,6 +749,7 @@ static httpd_handle_t start_server(void)
         { .uri = "/api/carousel/list",  .method = HTTP_GET,  .handler = carousel_list_handler,  .user_ctx = NULL },
         { .uri = "/api/carousel/delete",.method = HTTP_POST, .handler = carousel_delete_handler,.user_ctx = NULL },
         { .uri = "/api/carousel/full",  .method = HTTP_GET,  .handler = carousel_full_handler,  .user_ctx = NULL },
+        { .uri = "/api/carousel/show",  .method = HTTP_POST, .handler = carousel_show_handler,  .user_ctx = NULL },
         { .uri = "/api/clear",      .method = HTTP_POST,   .handler = clear_handler,        .user_ctx = NULL },
         { .uri = "/api/reboot",     .method = HTTP_POST,   .handler = reboot_handler,       .user_ctx = NULL },
         { .uri = "/api/factory",    .method = HTTP_POST,   .handler = factory_handler,      .user_ctx = NULL },
@@ -735,44 +802,36 @@ static void idle_monitor_task(void *arg)
     }
 }
 
-/* ---------------- 显示事件队列（R1.3.2） ----------------
-   按键等触发源只负责「投事件」，刷屏统一由 display_task 串行执行。
-   这样按键采样不会被 2~4 s 的整屏刷新阻塞（长按计时才准），
-   后续新增其它刷屏触发源（定时轮播、页面按钮、传感器等）
-   也只需 ui_post() 一个事件，不必碰按键逻辑。 */
-typedef enum {
-    UI_EV_CAROUSEL_NEXT = 0,     /* 切到下一张轮播 */
-} ui_event_t;
-
-static QueueHandle_t s_ui_q = NULL;
-
-static void ui_post(ui_event_t ev)
-{
-    if (!s_ui_q) return;
-    if (xQueueSend(s_ui_q, &ev, 0) != pdTRUE) {
-        ESP_LOGW(TAG, "ui queue full, drop event %d", (int)ev);
-    }
-}
-
-/* R1.3.0 轮播：切到下一张（读 store 槽并整屏显示）。count<=1 时无动作。
+/* R1.3.0 轮播：切到第 slot 张（读 store 槽并整屏显示）。越界时无动作。
    R1.3.2：只在 display_task 里调用，与按键采样彻底解耦。
    刷屏前先刷新活动计时：整屏刷新耗时 2~4 s，避免刚起手就撞上空闲深睡。 */
+static void carousel_show(int slot)
+{
+    int count = 0, cur = 0;
+    store_meta_get(&count, &cur);
+    if (slot < 0 || slot >= count) {
+        ESP_LOGW(TAG, "carousel: slot %d out of range (count %d)", slot, count);
+        return;
+    }
+
+    power_activity();
+    if (frame_display_slot(slot) != 0) {
+        /* R1.3.2：刷屏失败不推进 cur，否则下次按键会「跳过一张」。
+           旧实现先写 NVS 再刷屏，失败也照样前移。 */
+        ESP_LOGW(TAG, "carousel: slot %d display failed, keep cur %d", slot, cur);
+        return;
+    }
+    store_meta_set(count, slot);
+    ESP_LOGI(TAG, "carousel: show slot %d (count %d)", slot, count);
+}
+
+/* 切到下一张。count<=0 时无动作。 */
 static void carousel_next(void)
 {
     int count = 0, cur = 0;
     store_meta_get(&count, &cur);
     if (count <= 0) return;
-
-    int next = (cur + 1) % count;
-    power_activity();
-    if (frame_display_slot(next) != 0) {
-        /* R1.3.2：刷屏失败不推进 cur，否则下次按键会「跳过一张」。
-           旧实现先写 NVS 再刷屏，失败也照样前移。 */
-        ESP_LOGW(TAG, "carousel: slot %d display failed, keep cur %d", next, cur);
-        return;
-    }
-    store_meta_set(count, next);
-    ESP_LOGI(TAG, "carousel: next -> slot %d (count %d)", next, count);
+    carousel_show((cur + 1) % count);
 }
 
 /* R1.3.2 显示任务：固件里唯一执行「UI 触发刷屏」的任务（按键动作经队列进到这里）。
@@ -785,12 +844,15 @@ static void display_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
-    ui_event_t ev;
+    ui_msg_t m;
     for (;;) {
-        if (xQueueReceive(s_ui_q, &ev, portMAX_DELAY) != pdTRUE) continue;
-        switch (ev) {
+        if (xQueueReceive(s_ui_q, &m, portMAX_DELAY) != pdTRUE) continue;
+        switch (m.ev) {
         case UI_EV_CAROUSEL_NEXT:
             carousel_next();
+            break;
+        case UI_EV_CAROUSEL_SHOW:
+            carousel_show(m.slot);
             break;
         default:
             break;
@@ -955,7 +1017,7 @@ void app_main(void)
 
     /* 按键识别尽早启动（上电后约 0.3 s）：双击的第二击才来得及被采样到。
        本任务只投事件、不刷屏，display_task 就绪前投来的事件先在队列里排着。 */
-    s_ui_q = xQueueCreate(UI_QUEUE_LEN, sizeof(ui_event_t));
+    s_ui_q = xQueueCreate(UI_QUEUE_LEN, sizeof(ui_msg_t));
     if (s_ui_q == NULL) {
         ESP_LOGE(TAG, "ui queue create failed");
     }

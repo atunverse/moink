@@ -198,13 +198,18 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
 #prevOverlay{ position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:99;
   display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; }
 #prevCanvas{ max-width:92vw; max-height:78vh; background:#fff; border-radius:4px; }
+.prevBar{ display:flex; gap:10px; }
 </style>
 </head>
 <body>
 <!-- R1.3.1 大图预览层：必须在所有 <script> 之前，图库 JS 顶层绑定 $("prevClose")/$("prevOverlay") 依赖它先存在 -->
 <div id="prevOverlay" style="display:none">
   <canvas id="prevCanvas"></canvas>
-  <button class="mini" id="prevClose">关闭预览</button>
+  <div class="prevBar">
+    <button id="prevShow">显示到屏幕</button>
+    <button class="mini" id="prevClose">关闭预览</button>
+  </div>
+  <span class="savestate" id="prevmsg"></span>
 </div>
 
 <div id="workLoading" aria-hidden="true">
@@ -2295,6 +2300,7 @@ function deleteSlot(slot){
   });
 }
 
+var prevSlot = -1;   /* 大图预览当前打开的槽，「显示到屏幕」用 */
 function showPreview(slot){
   if (LOCAL_PREVIEW) return;
   /* R1.3.4：读取大图期间弹上传同款遮罩——锁定操作 + 进度反馈 */
@@ -2307,8 +2313,44 @@ function showPreview(slot){
     var w = (u8[4] << 8) | u8[5], h = (u8[6] << 8) | u8[7];
     renderFrameToCanvas($("prevCanvas"), u8.subarray(16), w, h, true);
     hideWorkLoading();
+    prevSlot = slot;
+    $("prevShow").disabled = false;
+    saveState("prevmsg", "", "");
     $("prevOverlay").style.display = "flex";
   }).catch(function(e){ hideWorkLoading(); saveState("caromsg", "err", "预览失败：" + e.message); });
+}
+
+/* 预览窗口「显示到屏幕」：固件只校验并排队，刷屏异步进行（2~4 s），
+   因此稍后再刷新图库，让「当前」高亮跟上设备。 */
+function showSlotOnDevice(){
+  if (caroBusy || prevSlot < 0) return;
+  var btn = $("prevShow");
+  btn.disabled = true;
+  saveState("prevmsg", "busy", "正在发送…");
+  fetch(api("/api/carousel/show?slot=" + prevSlot), { method: "POST" }).then(function(r){
+    return r.text().then(function(t){
+      return { ok: r.status === 200, status: r.status, body: t };
+    });
+  }).then(function(x){
+    if (x.ok){
+      saveState("prevmsg", "ok", "✓ 已发送到屏幕，刷新中（约 2~4 秒）");
+      setTimeout(refreshGallery, 4500);
+    } else if (x.status === 404 && /no such slot/.test(x.body)){
+      saveState("prevmsg", "err", "这张图已不在（可能已被删除），请关闭预览后重试");
+      refreshGallery();
+    } else if (x.status === 404 || x.status === 405){
+      saveState("prevmsg", "err", "当前固件不支持此功能，请先升级固件");
+    } else if (x.status === 503){
+      saveState("prevmsg", "err", "设备正忙，请稍后重试");
+    } else {
+      var extra = x.body ? (" · " + String(x.body).replace(/\s+/g, " ").slice(0, 60)) : "";
+      saveState("prevmsg", "err", "显示失败：HTTP " + x.status + extra);
+    }
+  }).catch(function(){
+    saveState("prevmsg", "err", "网络错误（可能已显示，请看屏幕）");
+  }).then(function(){
+    btn.disabled = false;
+  });
 }
 
 function clearCarousel(){
@@ -2340,6 +2382,7 @@ galGridEl.addEventListener("click", function(ev){
   if (cell) showPreview(parseInt(cell.getAttribute("data-slot"), 10));
 });
 $("carouselClear").addEventListener("click", clearCarousel);
+$("prevShow").addEventListener("click", showSlotOnDevice);
 $("prevClose").addEventListener("click", function(){ $("prevOverlay").style.display = "none"; });
 $("prevOverlay").addEventListener("click", function(ev){
   if (ev.target && ev.target.id === "prevOverlay") this.style.display = "none";

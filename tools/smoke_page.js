@@ -399,9 +399,16 @@ ok("R1.3.2 固件侧：轮播元数据多键单次 commit",
    storeC.indexOf("static int st_nvs_set_u8s(") >= 0
    && storeC.indexOf("st_nvs_set_u8s(KEY_COUNT") >= 0
    && (storeC.split("st_nvs_set_u8(KEY_CUR").length - 1) === 0);
-ok("R1.3.2 固件侧：carousel_next 刷屏成功后才推进 cur",
-   mainC.indexOf("if (frame_display_slot(next) != 0)") >= 0
-   && mainC.indexOf("store_meta_set(count, next);") >= 0);
+ok("R1.3.2 固件侧：carousel_show 刷屏成功后才推进 cur（carousel_next 经它切图）",
+   mainC.indexOf("if (frame_display_slot(slot) != 0)") >= 0
+   && mainC.indexOf("store_meta_set(count, slot);") >= 0
+   && mainC.indexOf("carousel_show((cur + 1) % count);") >= 0);
+ok("预览窗口「显示到屏幕」：页面按钮 + 固件 /api/carousel/show 经显示队列切图",
+   page.indexOf('id="prevShow"') >= 0
+   && page.indexOf('/api/carousel/show?slot=') >= 0
+   && mainC.indexOf('"/api/carousel/show"') >= 0
+   && mainC.indexOf("ui_post_msg(UI_EV_CAROUSEL_SHOW, slot)") >= 0
+   && mainC.indexOf("sizeof(ui_msg_t)") >= 0);
 ok("R1.3.2 页面：设备信息显示「本次唤醒」",
    page.indexOf('id="i-wake"') >= 0
    && js.indexOf("wakeTxt") >= 0 && js.indexOf("j.wake_reason") >= 0);
