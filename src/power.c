@@ -117,7 +117,8 @@ void power_enter_deep_sleep(void)
     gpio_hold_en((gpio_num_t)PIN_SELF_LOCK);
     gpio_deep_sleep_hold_en();
 
-    uint32_t wake_s = settings_get()->wake_s;
+    uint32_t wake_s = (settings_get()->timeout_action == SETT_ACTION_SLEEP)
+                      ? settings_get()->wake_s : 0;
     if (wake_s > 0) {
         esp_sleep_enable_timer_wakeup((uint64_t)wake_s * 1000000ULL);
     }
