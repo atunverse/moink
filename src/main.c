@@ -1,13 +1,13 @@
 /*
  * 墨印 · MoInk — 固件主装配（R 系列，重构版）
  *
- * 职责一句话：固件只做「热点 / 接收 / 刷图 / 休眠 / 唤醒 / OTA」，画面全部由页面
- * 在浏览器里合成。没有任何 STA 配网、没有拉图、没有固件端图像处理。
+ * 职责一句话：固件只做「热点 / 可选 STA 联网 / 接收 / 刷图 / 休眠 / 唤醒 / OTA」，
+ * 画面全部由页面在浏览器里合成。没有固件端图像处理、没有拉图、没有云端协议。
  *
  * 模块分工：
  *   epd_drv   屏驱动（A0/A1；引脚 R1.2.2 起运行时可配）
- *   settings  持久化：面板 / 翻转 / GPIO 引脚 / 休眠时长 / 自动唤醒 / 热点凭据
- *   netif_ap  纯 SoftAP（默认开放，SSID 默认 MoInk-XXXX）
+ *   settings  持久化：面板 / 翻转 / GPIO 引脚 / 休眠 / 唤醒 / 热点凭据 / 上游 WiFi 列表
+ *   netif_ap  SoftAP（默认开放，SSID 默认 MoInk-XXXX）+ 可选 STA（R1.3.5）
  *   captive   DNS 劫持 + OS 探测劫持（连上即弹控制页）
  *   frame     帧接收（16B 头 + CRC16 校验）+ 显示触发
  *   power     电池 ADC / 深睡 / 唤醒源 / 空闲休眠
@@ -15,8 +15,9 @@
  *
  * 路由：
  *   GET  /                控制页（web 分区优先，否则内嵌页）
- *   GET  /api/info        状态（版本 / 接口 / 面板 / 堆 / 电量 / 客户端数）
+ *   GET  /api/info        状态（版本 / 接口 / 面板 / 堆 / 电量 / 客户端数 / 联网）
  *   GET/POST /api/settings 读写设置
+ *   GET/POST /api/net     上游 WiFi 列表与热点转发状态（R1.3.5）
  *   POST /api/frame       传图
  *   POST /api/upload      ★统一升级入口（自动识别 .bin 固件 / .html 控制页）
  *   POST /api/web/clear   清除已上传控制页，回退内嵌页
@@ -192,14 +193,15 @@ static esp_err_t info_handler(httpd_req_t *req)
 {
     power_activity();
     const moink_settings_t *s = settings_get();
-    char buf[640];
+    char buf[800];
 
     /* ver = 统一版本号 = 当前生效页面版本（热更页优先，否则等于固件编译号）。
        fw  = 固件编译进去的号：仅供排障，以及判断「热更控制页是否落后于固件」
              （ver < fw 时页面给黄色警示），界面只显示 ver。
        api 仍是帧格式契约号，与发布版本号解耦，页面状态栏另起一行显示。
        store_slots / store_count / store_cur：轮播容量与当前状态（R1.3.0）。
-       wake_reason / wake_bits：本次启动的唤醒来源（R1.3.2），见 wake_src_t。 */
+       wake_reason / wake_bits：本次启动的唤醒来源（R1.3.2），见 wake_src_t。
+       net_on / napt / sta_*：上游 WiFi 与热点转发状态（R1.3.5）。 */
     int caro_count = 0, caro_cur = 0;
     store_meta_get(&caro_count, &caro_cur);
     int n = snprintf(buf, sizeof(buf),
@@ -208,7 +210,9 @@ static esp_err_t info_handler(httpd_req_t *req)
         "\"sleep_s\":%lu,\"wake_s\":%lu,\"clients\":%d,"
         "\"ssid\":\"%s\",\"uptime\":%lld,\"store_slots\":%d,"
         "\"store_count\":%d,\"store_cur\":%d,"
-        "\"wake_reason\":\"%s\",\"wake_bits\":%lu}",
+        "\"wake_reason\":\"%s\",\"wake_bits\":%lu,"
+        "\"net_on\":%u,\"napt\":%s,\"sta_connected\":%s,"
+        "\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\",\"sta_rssi\":%d}",
         ota_web_page_version(), MOINK_VERSION, MOINK_API_VERSION,
         epd_panel_name((epd_panel_t)s->panel), (unsigned)s->gpio_preset,
         (unsigned long)esp_get_free_heap_size(), power_battery_mv(),
@@ -216,7 +220,10 @@ static esp_err_t info_handler(httpd_req_t *req)
         netif_ap_client_count(), netif_ap_ssid(),
         (long long)(esp_timer_get_time() / 1000000), store_slots(),
         caro_count, caro_cur,
-        wake_src_name(s_wake_src), (unsigned long)s_wake_bits);
+        wake_src_name(s_wake_src), (unsigned long)s_wake_bits,
+        s->net_on, netif_napt_active() ? "true" : "false",
+        netif_sta_connected() ? "true" : "false",
+        netif_sta_ssid(), netif_sta_ip(), netif_sta_rssi());
     if (n < 0 || n >= (int)sizeof(buf)) buf[sizeof(buf) - 1] = '\0';
 
     httpd_resp_set_type(req, "application/json");
@@ -354,6 +361,120 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
         esp_timer_start_once(s_ap_timer, 300 * 1000);
     }
     return err;
+}
+
+/* ---------------- /api/net（R1.3.5：上游 WiFi 与热点转发） ----------------
+ *
+ * GET  返回联网状态 + 已保存网络列表（绝不回传密码）
+ * POST body 三种形态：
+ *   action=add&ssid=..&pass=..   添加/更新一个网络（同名则更新密码并置顶）
+ *   action=del&idx=N             删除第 N 个
+ *   action=clear                 清空全部
+ *   on=1&napt=1                  改开关（无 action 时）
+ */
+
+/* 极简 JSON 转义：SSID 可能出现引号/反斜杠；控制字符替换为空格。 */
+static void json_esc(const char *in, char *out, size_t n)
+{
+    size_t o = 0;
+    for (const char *p = in; *p && o + 3 < n; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '"' || c == '\\') { out[o++] = '\\'; out[o++] = (char)c; }
+        else if (c < 0x20)         { out[o++] = ' '; }
+        else                       { out[o++] = (char)c; }
+    }
+    out[o] = '\0';
+}
+
+static esp_err_t net_get_handler(httpd_req_t *req)
+{
+    power_activity();
+    const moink_settings_t *s = settings_get();
+
+    /* 放 static：8 个网络的 JSON 最长约 1.1 KB，httpd 任务栈只有 4 KB。 */
+    static char buf[1280];
+    int off = 0;
+
+    off += snprintf(buf + off, sizeof(buf) - (size_t)off,
+        "{\"on\":%u,\"napt_on\":%u,\"napt\":%s,\"connected\":%s,"
+        "\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"trying\":%d,"
+        "\"count\":%d,\"list\":[",
+        s->net_on, s->napt_on, netif_napt_active() ? "true" : "false",
+        netif_sta_connected() ? "true" : "false",
+        netif_sta_ssid(), netif_sta_ip(), netif_sta_rssi(),
+        netif_sta_trying(), settings_wifi_count());
+
+    for (int i = 0; i < settings_wifi_count(); i++) {
+        const sett_wifi_t *w = settings_wifi_at(i);
+        if (!w) break;
+        if (off > (int)sizeof(buf) - 120) break;   /* 余量不足就收尾 */
+
+        char esc[SETT_SSID_MAX * 2 + 4];
+        json_esc(w->ssid, esc, sizeof(esc));
+        off += snprintf(buf + off, sizeof(buf) - (size_t)off,
+                        "%s{\"ssid\":\"%s\",\"has_pass\":%s}",
+                        i ? "," : "", esc, w->pass[0] ? "true" : "false");
+    }
+    if (off < (int)sizeof(buf) - 4)
+        off += snprintf(buf + off, sizeof(buf) - (size_t)off, "]}");
+    if (off > (int)sizeof(buf) - 1) off = (int)sizeof(buf) - 1;
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, (size_t)off);
+}
+
+static esp_err_t net_post_handler(httpd_req_t *req)
+{
+    power_activity();
+    char body[512];
+    read_body(req, body, sizeof(body));
+
+    char v[SETT_PASS_MAX];
+    char act[16] = "";
+    kv_get(body, "action", act, sizeof(act));
+
+    if (strcmp(act, "add") == 0) {
+        char ssid[SETT_SSID_MAX], pass[SETT_PASS_MAX];
+        if (!kv_get(body, "ssid", ssid, sizeof(ssid)))
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing ssid");
+        if (!kv_get(body, "pass", pass, sizeof(pass))) pass[0] = '\0';
+        if (settings_wifi_add(ssid, pass) != ESP_OK)
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad ssid");
+        netif_sta_reconnect();
+        return httpd_resp_sendstr(req, "OK ADD");
+    }
+
+    if (strcmp(act, "del") == 0) {
+        if (!kv_get(body, "idx", v, sizeof(v)))
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing idx");
+        if (settings_wifi_remove(atoi(v)) != ESP_OK)
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad idx");
+        netif_sta_reconnect();
+        return httpd_resp_sendstr(req, "OK DEL");
+    }
+
+    if (strcmp(act, "clear") == 0) {
+        settings_wifi_clear();
+        netif_sta_reconnect();
+        return httpd_resp_sendstr(req, "OK CLEAR");
+    }
+
+    /* 无 action：改开关。napt 变化只重估转发，不打断已建立的连接。 */
+    bool changed = false, napt_changed = false, net_changed = false;
+    if (kv_get(body, "on", v, sizeof(v))) {
+        settings_set_net((uint8_t)atoi(v));
+        changed = net_changed = true;
+    }
+    if (kv_get(body, "napt", v, sizeof(v))) {
+        settings_set_napt((uint8_t)atoi(v));
+        changed = napt_changed = true;
+    }
+    if (!changed)
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "no action");
+
+    if (napt_changed) netif_napt_refresh();
+    if (net_changed)  netif_sta_reconnect();
+    return httpd_resp_sendstr(req, "OK");
 }
 
 /* ---------------- /api/clear / /api/factory ---------------- */
@@ -678,6 +799,8 @@ static httpd_handle_t start_server(void)
         { .uri = "/api/info",       .method = HTTP_GET,    .handler = info_handler,         .user_ctx = NULL },
         { .uri = "/api/settings",   .method = HTTP_GET,    .handler = settings_get_handler, .user_ctx = NULL },
         { .uri = "/api/settings",   .method = HTTP_POST,   .handler = settings_post_handler,.user_ctx = NULL },
+        { .uri = "/api/net",        .method = HTTP_GET,    .handler = net_get_handler,      .user_ctx = NULL },
+        { .uri = "/api/net",        .method = HTTP_POST,   .handler = net_post_handler,     .user_ctx = NULL },
         { .uri = "/api/frame",      .method = HTTP_POST,   .handler = frame_upload_handler, .user_ctx = NULL },
         { .uri = "/api/carousel/clear", .method = HTTP_POST, .handler = clear_carousel_handler, .user_ctx = NULL },
         { .uri = "/api/carousel/list",  .method = HTTP_GET,  .handler = carousel_list_handler,  .user_ctx = NULL },
@@ -971,6 +1094,8 @@ void app_main(void)
 
     frame_init();
     netif_ap_init();
+    /* R1.3.5：STA 连接任务独立跑，连不上只影响「能否上网」，不影响热点与本地功能。 */
+    netif_sta_start();
     captive_dns_start();
 
     if (start_server() == NULL) {

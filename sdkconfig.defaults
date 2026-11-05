@@ -17,8 +17,15 @@ CONFIG_LOG_DEFAULT_LEVEL=1
 
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 
-# ---- WiFi 仅 SoftAP（无 STA）；缓冲池保持 IDF 默认 32（不要为了省内存去砍）----
+# ---- WiFi：SoftAP + 可选 STA（R1.3.6 联网）----
+# 缓冲池保持 IDF 默认 32（不要为了省内存去砍，APSTA 共存时更吃紧）
 CONFIG_ESP_WIFI_ENABLED=y
+
+# ---- 热点转发（NAPT）：让连本机热点的手机经 STA 上网 ----
+# IPV4_NAPT 依赖 IP_FORWARD，两者必须一起开；关掉任一则 esp_netif_napt_enable() 直接失败。
+# 代价：lwIP 转发路径多占约 8~16 KB pbuf 缓冲。
+CONFIG_LWIP_IP_FORWARD=y
+CONFIG_LWIP_IPV4_NAPT=y
 
 # ---- captive portal：Espressif 官方示例使用 16 个 lwIP socket，HTTPD 可用 13 个 ----
 CONFIG_LWIP_MAX_SOCKETS=16

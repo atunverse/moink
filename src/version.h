@@ -220,8 +220,34 @@
  *     /api/carousel/list 与 /full 必须经 store_slot_phys() 换算物理偏移。
  *     api 仍为 2，分区表与帧格式零变动。
  * ────────────────────────────────────────────────────────────────
+ *
+ * R1.3.5 变更（2026-11-05，设备联网：多 WiFi 记忆 + 热点转发）：
+ *   - ★ 新增 STA（设备连上游 WiFi）：`WIFI_MODE_AP` → `WIFI_MODE_APSTA`，
+ *     AP 侧行为完全不变（SSID / 密码 / 默认开放 / 门户劫持）。
+ *   - ★ 多网络记忆：最多记住 SETT_WIFI_MAX(8) 个上游网络（NVS "wn" + "wlist" blob，
+ *     784 B）。开机/唤醒后按「上次成功的优先，其余按保存顺序」依次尝试，每个超时
+ *     12 s，全部失败退避 15 s 重试。连不上只影响能否上网，热点与本地功能不受影响。
+ *   - ★ 热点转发（NAPT）：STA 拿到 IP 后调 esp_netif_napt_enable()，让连本机热点的
+ *     设备经 STA 上网。sdkconfig 同步打开 CONFIG_LWIP_IP_FORWARD + CONFIG_LWIP_IPV4_NAPT
+ *     （缺一不可，否则 napt_enable() 直接失败）。
+ *   - ★ DNS 跟随：NAPT 只转发 IP、**不带 DNS relay**，若仍给客户端下发 192.168.4.1，
+ *     手机能 ping 通却解析不了域名。故 NAPT 生效时把 DHCP DNS 改为上游 DNS；断开或
+ *     关闭转发时恢复 192.168.4.1，保留门户劫持。
+ *   - ★ AP 信道跟随：APSTA 共用一个射频，STA 连上后 AP 必须停在 STA 的信道。
+ *     原固定 AP_CHANNEL(6) 仅在未连 STA 时生效；netif_ap_apply() 在已连接时读取
+ *     当前信道，避免把 STA 踢下线。
+ *   - 新接口 GET/POST /api/net：读取联网状态与已保存网络列表（不回传密码）、
+ *     增删网络、切换联网/转发开关。/api/info 增加 net_on / napt / sta_connected /
+ *     sta_ssid / sta_ip / sta_rssi。
+ *   - 新 NVS 键：wn / wlist / wifi_last / net_on / napt_on。老设备无这些键时
+ *     net_on=0 ⇒ **升级后行为与旧固件完全一致**（不联网、不转发）。
+ *   - 内存代价：settings 结构约 +790 B 静态 RAM；STA 连接任务 3.5 KB 栈；
+ *     NAPT 转发路径约 +8~16 KB pbuf。api 仍为 2，分区表与帧格式零变动。
+ *   （注：本文件上方 2026-10-13 那两条 R1.3.5 / R1.3.6 是「R1.3.0 基线重置」
+ *     之前的旧编号，属归档文字，与本条同号但无关。）
+ * ────────────────────────────────────────────────────────────────
  */
 #define MOINK_API_VERSION   2
-#define MOINK_VERSION       "R1.3.4"
+#define MOINK_VERSION       "R1.3.5"
 
 #endif /* MOINK_VERSION_H */

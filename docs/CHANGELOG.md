@@ -39,6 +39,45 @@
 
 ---
 
+## [R1.3.5] 2026-11-05 —— 设备联网：多 WiFi 记忆 + 热点转发
+
+> 功能批：设备从「只能开热点」变成「也能连路由器」。**默认关闭**（`net_on=0`），
+> 老设备升级后行为与 R1.3.4 完全一致。
+
+### 新增
+- **多 WiFi 记忆**：最多保存 8 个上游网络（NVS `wn` + `wlist` blob 784 B）。开机 / 唤醒后
+  按「上次成功的优先，其余按保存顺序」依次尝试，单个超时 12 s，全部失败退避 15 s 重试。
+  连不上只影响外网，热点、传图、轮播、休眠全部照常。
+- **热点转发（NAPT）**：STA 拿到 IP 后 `esp_netif_napt_enable()`，让连本机热点的设备
+  也能上网。sdkconfig 打开 `CONFIG_LWIP_IP_FORWARD` + `CONFIG_LWIP_IPV4_NAPT`（缺一不可）。
+- **DNS 跟随**：NAPT 只转发 IP、**不带 DNS relay**，若不改 DHCP 下发的 DNS，客户端能
+  ping 通却解析不了域名。故转发生效时把 DHCP DNS 改为上游 DNS；断开 / 关闭转发时恢复
+  `192.168.4.1`，保留原有门户劫持。
+- 新接口 `GET/POST /api/net`；`/api/info` 增加 `net_on` / `napt` / `sta_connected` /
+  `sta_ssid` / `sta_ip` / `sta_rssi`（契约见 CONTRACT §6.3）。
+- 控制页新增「联网（上游 WiFi）」卡片：联网 / 转发开关、已保存列表（可逐个删除）、
+  添加网络、当前连接状态与信号强度。
+
+### 修改
+- WiFi 模式 `WIFI_MODE_AP` → `WIFI_MODE_APSTA`；**AP 侧行为零改动**
+  （SSID / 密码 / 默认开放 / 门户劫持均不变）。
+- **AP 信道跟随 STA**：APSTA 共用一个射频，STA 连上后 AP 必须停在该信道。原先固定的
+  信道 6 只在未连 STA 时生效；`netif_ap_apply()` 在已连接时先读当前信道再写配置，
+  避免把 STA 踢下线。
+
+### 涉及文件
+- `src/settings.h` / `settings.c`：`sett_wifi_t`、5 个新键、网络列表增删改查
+- `src/netif_ap.h` / `netif_ap.c`：APSTA、连接任务、NAPT、DNS 跟随
+- `src/main.c`：`/api/net` 路由、`/api/info` 扩展、启动时拉起 STA 任务
+- `sdkconfig.defaults`：`LWIP_IP_FORWARD` / `LWIP_IPV4_NAPT`
+- `page/index.html`、`src/index_html.h`、`src/version.h`、`docs/CONTRACT.md`（新增 §6.3）
+
+### 影响范围与注意事项
+- **老设备升级后不会自动联网**（`net_on` 默认 0），需进页面打开开关并添加 WiFi。
+- 内存：settings 结构约 +790 B 静态 RAM；STA 任务 3.5 KB 栈；NAPT 转发路径多占 8~16 KB pbuf。
+- APSTA 单射频分时，转发吞吐约为单 STA 的一半（够配置页与取图，不够看视频）。
+- `api` 仍为 2，帧格式、分区表、帧头零变动，可正常 OTA。
+
 ## [R1.3.4] 2026-10-20 —— 电池电压读数修复 + 轮播删除健壮性
 
 > Bug 批（版本号第三位 +1）：修两个实测问题 ——

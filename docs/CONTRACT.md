@@ -2,7 +2,7 @@
 
 > 本文档是**固件与页面之间的唯一权威接口定义**，以及**屏驱动的物理契约**。
 > 改动任何一条必须同步更新 `check_frame.py` / `smoke_page.js` 并全量回归。
-> 版本：version = R1.3.4（固件与控制页共用这一个号），api = 2。
+> 版本：version = R1.3.5（固件与控制页共用这一个号），api = 2。
 
 ---
 
@@ -224,10 +224,12 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/` | 控制页（web 分区优先，否则内嵌页） |
-| GET | `/api/info` | 状态 JSON：**ver**/fw/api/panel/**gpio_preset**/heap/bat_mv/sleep_s/wake_s/clients/ssid/uptime/**store_slots**/**store_count**/**store_cur**/**wake_reason**/**wake_bits**（`ver` = 当前生效版本，`wake_reason` 见 §5.2；`bat_mv` 语义见 §6.2.2） |
+| GET | `/api/info` | 状态 JSON：**ver**/fw/api/panel/**gpio_preset**/heap/bat_mv/sleep_s/wake_s/clients/ssid/uptime/**store_slots**/**store_count**/**store_cur**/**wake_reason**/**wake_bits**/**net_on**/**napt**/**sta_connected**/**sta_ssid**/**sta_ip**/**sta_rssi**（`ver` = 当前生效版本，`wake_reason` 见 §5.2；`bat_mv` 语义见 §6.2.2；`net_*` / `sta_*` 见 §6.3） |
 | GET | `/api/settings` | 读设置 JSON：panel/hflip/wifi_pwr/**gpio_preset**/**pins[8]**/sleep_s/**timeout_action**/wake_s/**wake_show**/ssid/pass_set |
 | POST | `/api/settings` | 写设置（`panel`/`hflip`/`gpio_preset`（自定义档另带 `p_adc`/`p_wake`/`p_sck`/`p_mosi`/`p_cs`/`p_dc`/`p_rst`/`p_busy`）/`sleep_s`/**`timeout_action`**/`wake_s`/**`wake_show`**；热点凭据单字段更新见 §7） |
 | POST | `/api/frame` | 传图（§1 帧格式）。query：`save=1` 存轮播槽并显示、`save=1&noshow=1` 只存不显示、`tlen=N` 随帧携带缩略（§1.1）。无 `save` = 只显示不存 |
+| GET | **`/api/net`** | 联网状态 JSON（R1.3.5）：`{on,napt_on,napt,connected,ssid,ip,rssi,trying,count,list[{ssid,has_pass}]}`。**不回传密码**；`list` 顺序即尝试优先级 |
+| POST | **`/api/net`** | 上游 WiFi 管理（R1.3.5）：`action=add&ssid=..&pass=..`（同名更新密码并置顶）/ `action=del&idx=N` / `action=clear`；不带 `action` 时按 `on=0|1`、`napt=0|1` 改开关。详见 §6.3 |
 | POST | `/api/carousel/clear` | 清空轮播：**只清 NVS 元数据、不擦 flash**（`count=0` / `cur=0` / `alive=0`） |
 | GET | `/api/carousel/list` | 图库列表 JSON：`{slots,count,cur,items[{slot,fmt,w,h,len,data}]}`，`data` = 缩略图 base64（`fmt=2` 为彩色 JPEG，`fmt=1` 为 2bit 帧） |
 | GET | `/api/carousel/full?slot=N` | 整帧二进制（16B 头 + 2bpp 载荷），供网页大图预览；流式读 flash 分块发送 |
@@ -292,12 +294,53 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
 - 缩略载荷（`tlen`）只服务图库列表，**只刷新的通道不带缩略**。
 - 固件侧语义本就区分「无 `save` = 只显示不存」，本次为纯页面改动，api 不变。
 
+### 6.3 联网：多 WiFi 记忆与热点转发（R1.3.5 起）
+
+#### 6.3.1 `/api/net` 与 `/api/info` 的联网字段
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `on` | 0/1 | 联网总开关（NVS `net_on`）。0 = 完全不尝试连上游，行为与 R1.3.4 一致 |
+| `napt_on` | 0/1 | 转发开关（NVS `napt_on`） |
+| `napt` | bool | **实际生效中**的转发状态：须 `on` + 已连上 + `napt_on` 三者同时成立 |
+| `connected` | bool | 已连上游并拿到 IP |
+| `ssid` / `ip` / `rssi` | string / string / int | 当前上游连接信息；未连接时 ssid、ip 为空串，rssi 为 0 |
+| `trying` | int | 正在尝试的列表下标（-1 = 空闲或已连上） |
+| `count` | int | 已保存网络数（0..8） |
+| `list[]` | array | `{ssid, has_pass}`；**顺序即尝试优先级**，第 0 个最先试。**不含密码** |
+
+#### 6.3.2 自动连接语义
+
+1. 开机 / 唤醒后从 `wifi_last`（上次成功的下标）开始，按 `(last+k) % count` 依次尝试；
+   无记录时从 0 开始 —— 唤醒场景下大概率第一个就命中。
+2. 单个网络超时 **12 s**；失败立即试下一个。
+3. 全部失败 → 退避 **15 s** 重试。退避用任务通知等待，页面改设置可立即打断。
+4. 连接成功后写 `wifi_last`；运行中掉线由 `WIFI_EVENT_STA_DISCONNECTED` 触发整轮重来。
+5. **失败不影响 AP**：热点、传图、轮播、休眠全部照常；连不上只意味着「没有外网」。
+
+#### 6.3.3 热点转发（NAPT）与 DNS
+
+- 转发：`esp_netif_napt_enable(sta_netif)`，编译期依赖 `CONFIG_LWIP_IP_FORWARD` +
+  `CONFIG_LWIP_IPV4_NAPT`（缺一 `napt_enable()` 直接失败）。
+- ★ **ESP-IDF 的 NAPT 不带 DNS relay**：若不改 DHCP 下发的 DNS，客户端能 ping 通 IP
+  却解析不了域名（表现为「连上了但没网」）。因此转发生效时把 AP 的 DHCP DNS 改为上游
+  DNS；断开或关闭转发时恢复 `192.168.4.1`，保留原有门户劫持。
+- ★ **AP 信道跟随 STA**：APSTA 共用一个射频，STA 连上后 AP 必须停在该信道。
+  固件在已连接时先 `esp_wifi_get_channel()` 再写 AP 配置，避免把 STA 踢下线；
+  原固定信道 6 只在未连 STA 时生效。
+- 代价：AP+STA 分时共用射频，转发吞吐约为单 STA 的一半；lwIP 转发路径多占约 8~16 KB。
+
 ## 7. 设置与 NVS
 
 - 命名空间 `moink`；键 `panel` / `hflip` / `wifi_pwr` / `sleep_s` / `wake_s` /
   **`gpio_preset`** / **`p_adc` `p_wake` `p_sck` `p_mosi` `p_cs` `p_dc` `p_rst` `p_busy`** /
-  `ap_ssid` / `ap_pass`（`page_ver` 为控制页热更标记，由 `ota_web.c` 维护）。
+  `to_act` / `wake_show` / `ap_ssid` / `ap_pass`
+  （`page_ver` 为控制页热更标记，由 `ota_web.c` 维护）。
   （`a1_mode` 键已随 R1.2.2 删除。）
+- **联网相关键（R1.3.5）**：`net_on`（联网开关）/ `napt_on`（转发开关）/
+  `wn`（已保存网络数 0..8）/ `wifi_last`（上次成功的下标，`0xFF` = 无记录）/
+  **`wlist`**（blob，`SETT_WIFI_MAX(8) × (33+65) = 784 B` 的定长数组；`wn=0` 时该键被删除）。
+  ⚠️ 老设备没有这些键 → `net_on=0`，**升级后行为与 R1.3.4 完全一致**，不会自己去连 WiFi。
 - **固件升级不重置设置**（R1.2.2 起）：OTA 校验通过、切槽之后调用
   `settings_reset_for_upgrade()`，它**只清理本版已废弃的键**（`a1_mode` / `a11_var`），
   其余设置一律原样保留 —— `panel` / `hflip` / `wifi_pwr` / `gpio_preset` +
@@ -319,6 +362,8 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
 - 热点：SSID 空 → 默认 `MoInk-XXXX`（XXXX = MAC 后 2 字节）；密码空 → **开放**。
   AP 通道 **6**（避开 ESP32-C3 40MHz 晶振落在 2.4 GHz 低段的谐波，见 FB-001），最多 4 客户端，
   DHCP DNS 指向 `192.168.4.1`。
+  ⚠️ R1.3.5 起为 APSTA：**STA 连上后 AP 信道自动跟随 STA**，此时固定 6 不再生效；
+  NAPT 生效时 DHCP DNS 也会改为上游 DNS（见 §6.3.3）。
 - **轮播元数据单独一个命名空间 `store`**（R1.3.0）：`cnt` = 有效张数、`cur` = 当前显示槽、
   **`alive`** = 物理槽有效位图（R1.3.4；槽位状态的唯一真源，`cnt` 由 `popcount(alive)` 推导）、
   `widx` = 历史写指针（R1.3.1 起「追加到末尾」后不再使用，读到即归一为 `0`）。

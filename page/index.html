@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="moink-page-version" content="R1.3.4">
+<meta name="moink-page-version" content="R1.3.5">
 <title>墨印 · MoInk</title>
 <style>
 /* ===== Cropper.js v1.6.2 | MIT | https://github.com/fengyuanchen/cropperjs ===== */
@@ -57,6 +57,17 @@ footer#appFoot a:active,footer#appFoot a:hover{ color:var(--acc); border-bottom-
 .row{ display:flex; align-items:center; gap:10px; margin:8px 0; flex-wrap:wrap; }
 .row label{ font-size:13px; color:var(--mut); min-width:56px; }
 .hint{ font-size:12px; color:var(--mut); margin:6px 0; }
+/* 联网卡片（R1.3.5）：已保存的上游 WiFi 列表 */
+.wifiList{ display:flex; flex-direction:column; gap:6px; margin:10px 0; }
+.wifiList:empty{ display:none; }
+.wifiItem{ display:flex; align-items:center; gap:8px; padding:7px 10px;
+           background:var(--bg); border:1px solid var(--line); border-radius:10px;
+           font-size:13px; }
+.wifiItem .n{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wifiItem .tag2{ flex-shrink:0; font-size:11px; color:var(--ok); background:#e3f2e8;
+                 padding:1px 6px; border-radius:99px; }
+.wifiItem .del{ flex-shrink:0; padding:2px 9px; font-size:12px; background:#f3e7e4;
+                color:var(--err); border-radius:8px; }
 button{ font-family:inherit; cursor:pointer; border:none; border-radius:10px;
         background:var(--acc); color:#fff; font-size:14px; padding:9px 16px; }
 button.mini{ background:#f1ece1; color:var(--ink); padding:7px 12px; font-size:13px; }
@@ -472,6 +483,42 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
       <span class="hint" style="margin:0">连不上 / 传输不稳时调高</span>
     </div>
     <div class="row"><button class="mini" id="saveAp">保存热点设置</button><span class="savestate" id="apmsg"></span></div>
+    </details>
+
+    <details>
+      <summary>联网（上游 WiFi）</summary>
+    <div class="row">
+      <label>联网</label>
+      <span><input type="checkbox" id="netOn"> 设备连接路由器</span>
+    </div>
+    <div class="row">
+      <label>转发</label>
+      <span><input type="checkbox" id="naptOn"> 连本设备热点的设备也能上网</span>
+    </div>
+    <div class="row">
+      <label>状态</label>
+      <span id="netState" class="hint" style="margin:0">—</span>
+      <button class="mini" id="netRefresh" style="padding:2px 10px">刷新</button>
+    </div>
+
+    <div class="wifiList" id="wifiList"></div>
+
+    <div class="row">
+      <label>名称</label>
+      <input type="text" id="staSsid" maxlength="32" placeholder="路由器 WiFi 名称">
+    </div>
+    <div class="row">
+      <label>密码</label>
+      <input type="password" id="staPass" maxlength="64" placeholder="留空 = 开放网络">
+    </div>
+    <div class="row">
+      <button class="mini" id="wifiAdd">添加并连接</button>
+      <span class="savestate" id="wifimsg"></span>
+    </div>
+    <div class="hint">
+      最多记住 8 个网络。开机 / 唤醒后按「上次连上的优先」依次尝试，任一成功即停；
+      全部失败每 15 秒重试一次。<b>连不上不影响热点传图</b>。
+    </div>
     </details>
 
     <details>
@@ -2442,6 +2489,89 @@ function loadSettings(){
     if (applyPanelGeom(+s.panel)) onGeomChanged();
     $("hflip").checked = !!s.hflip;
   }).catch(function(){});
+  loadNet();          /* R1.3.5：联网状态与上游 WiFi 列表 */
+}
+
+/* ---------- 联网（R1.3.5）----------
+   只在打开设置 / 用户操作后请求，**不做定时轮询**：/api/net 会调 power_activity()，
+   轮询会让设备永远不休眠（与电池电压那条是同一个坑）。 */
+function netBody(o){
+  return Object.keys(o).map(function(k){
+    return encodeURIComponent(k) + "=" + encodeURIComponent(o[k]);
+  }).join("&");
+}
+function loadNet(){
+  fetch(api("/api/net")).then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(n){
+      if (!n) return;
+      $("netOn").checked = !!n.on;
+      $("naptOn").checked = !!n.napt_on;
+      var st = $("netState");
+      if (n.connected){
+        st.textContent = "已连上 " + n.ssid + " · " + n.ip +
+                         (n.rssi ? " · " + n.rssi + " dBm" : "") +
+                         (n.napt ? " · 转发中" : "");
+        st.style.color = "var(--ok)";
+      } else if (!n.on){
+        st.textContent = n.count ? "未启用" : "还没有保存任何网络";
+        st.style.color = "var(--mut)";
+      } else if (n.trying >= 0){
+        st.textContent = "正在连接第 " + (n.trying + 1) + " 个网络…";
+        st.style.color = "var(--acc)";
+      } else {
+        st.textContent = n.count ? "未连接，后台重试中" : "没有可用的网络";
+        st.style.color = "var(--err)";
+      }
+      var box = $("wifiList");
+      box.innerHTML = "";
+      (n.list || []).forEach(function(w, i){
+        var row = document.createElement("div");
+        row.className = "wifiItem";
+        var nm = document.createElement("span");
+        nm.className = "n";
+        nm.textContent = w.ssid + (w.has_pass ? "" : "（开放）");
+        row.appendChild(nm);
+        if (n.connected && w.ssid === n.ssid){
+          var t = document.createElement("span");
+          t.className = "tag2"; t.textContent = "已连接";
+          row.appendChild(t);
+        }
+        var del = document.createElement("button");
+        del.className = "del"; del.textContent = "删除";
+        del.onclick = function(){ postNet({action: "del", idx: i}, "wifimsg"); };
+        row.appendChild(del);
+        box.appendChild(row);
+      });
+    })
+    .catch(function(){ /* 旧固件没有 /api/net：静默跳过 */ });
+}
+function postNet(o, msgId){
+  var el = $(msgId);
+  if (el) saveState(msgId, "", "保存中…");
+  fetch(api("/api/net"), {
+    method: "POST",
+    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: netBody(o)
+  }).then(function(r){
+    return r.text().then(function(t){ return {ok: r.ok, status: r.status, text: t}; });
+  }).then(function(x){
+    if (!x.ok) throw new Error(x.text || ("HTTP " + x.status));
+    if (el) saveState(msgId, "ok", "✓ 已保存");
+    setTimeout(loadNet, 500);
+  }).catch(function(e){
+    if (el) saveState(msgId, "err", "✗ " + (e.message || "失败"));
+  });
+}
+function initNetUI(){
+  $("wifiAdd").onclick = function(){
+    var ssid = $("staSsid").value.trim();
+    if (!ssid){ saveState("wifimsg", "err", "✗ 请填 WiFi 名称"); return; }
+    postNet({action: "add", ssid: ssid, pass: $("staPass").value}, "wifimsg");
+    $("staSsid").value = ""; $("staPass").value = "";
+  };
+  $("netOn").onchange  = function(){ postNet({on: $("netOn").checked ? 1 : 0}, "wifimsg"); };
+  $("naptOn").onchange = function(){ postNet({napt: $("naptOn").checked ? 1 : 0}, "wifimsg"); };
+  $("netRefresh").onclick = loadNet;
 }
 /* ---------- 设置就地保存状态（R1.1.3，FB-014）----------
    背景：全局提示 #msg 挂在「图片」标签页里，切到「设备」标签页保存设置时写进去的
@@ -2797,6 +2927,7 @@ $("padGrid").style.display = cfg.padOn ? "grid" : "none";
 CTRL.forEach(function(c){ setCtrlVal(c, cfg[c.key]); });
 $("space").value = cfg.space;   /* R1.0.26: 色域下拉回填存储值 */
 refreshDefMarks();
+initNetUI();
 refreshInfo();
 loadSettings();
 </script>

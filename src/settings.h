@@ -21,6 +21,24 @@
 #define SETT_SSID_MAX 33
 #define SETT_PASS_MAX 65
 
+/* ---------------- 多 WiFi 记忆（R1.3.5） ----------------
+ *
+ * 设备最多记住 SETT_WIFI_MAX 个上游 WiFi。唤醒/开机时按
+ * 「上次连上的优先，其余按保存顺序」依次尝试，任一成功即停。
+ * 整块以 blob 存 NVS（键 "wlist"，784 B）+ 一个 u8 计数（键 "wn"），
+ * 避免 16 个键的读写循环；与既有逐键设置互不干扰。
+ *
+ * sett_wifi_t 必须是纯 char 数组（无 padding），才能整块 memcpy 进 blob。
+ * 改字段请同步确认 sizeof(sett_wifi_t) == SETT_SSID_MAX + SETT_PASS_MAX。
+ */
+#define SETT_WIFI_MAX 8
+
+typedef struct {
+    char ssid[SETT_SSID_MAX];
+    char pass[SETT_PASS_MAX];
+} sett_wifi_t;
+
+
 /* 休眠时长档位（秒）。0 = 不休眠。 */
 #define SETT_SLEEP_OFF    0
 #define SETT_SLEEP_1MIN   60
@@ -110,6 +128,13 @@ typedef struct {
     uint8_t  wake_show;  /* 定时唤醒后自动切到下一张；1 = 是（默认，R1.3.3） */
     char     ap_ssid[SETT_SSID_MAX];  /* 空 = 用默认 MoInk-XXXX */
     char     ap_pass[SETT_PASS_MAX];  /* 空 = 热点开放 */
+
+    /* R1.3.5：上游 WiFi 记忆与联网开关 */
+    uint8_t     wifi_n;                       /* 已保存网络数 0..SETT_WIFI_MAX */
+    sett_wifi_t wifi[SETT_WIFI_MAX];          /* [0..wifi_n-1] 有效 */
+    uint8_t     wifi_last;                    /* 上次连上的下标；越界 = 无记录 */
+    uint8_t     net_on;                       /* 1 = 允许连上游 WiFi */
+    uint8_t     napt_on;                      /* 1 = 热点流量经 STA 转发（NAPT） */
 } moink_settings_t;
 
 void settings_init(void);
@@ -134,6 +159,36 @@ esp_err_t settings_set_wake_show(uint8_t v);
 esp_err_t settings_set_gpio(uint8_t preset, const pin_cfg_t *custom);
 /* FB-014①：ssid / pass 任一为 NULL = 保持当前值；pass 为空串 = 清除密码（热点开放）。 */
 esp_err_t settings_set_ap(const char *ssid, const char *pass);
+
+/* ---------------- 多 WiFi 记忆（R1.3.5） ---------------- */
+
+/* 已保存网络数（0..SETT_WIFI_MAX）。 */
+int settings_wifi_count(void);
+
+/* 取第 i 个网络；越界返回 NULL。 */
+const sett_wifi_t *settings_wifi_at(int i);
+
+/*
+ * 添加或更新一个网络：
+ *   - 已存在同名 SSID → 只更新密码，并移到列表首位（下次优先尝试）；
+ *   - 列表已满   → 挤掉最后一个；
+ *   - ssid 为空或超长 → ESP_ERR_INVALID_ARG。
+ * 返回 ESP_OK 后调用方需自行触发重连（netif_sta_reconnect）。
+ */
+esp_err_t settings_wifi_add(const char *ssid, const char *pass);
+
+/* 删除第 i 个网络（后续元素前移）。越界返回 ESP_ERR_INVALID_ARG。 */
+esp_err_t settings_wifi_remove(int i);
+
+/* 清空全部已保存网络。 */
+esp_err_t settings_wifi_clear(void);
+
+/* 记录「第 i 个网络连接成功」，下次优先尝试它。 */
+void settings_wifi_mark_ok(int i);
+
+/* 联网总开关 / 热点转发开关。 */
+esp_err_t settings_set_net(uint8_t on);
+esp_err_t settings_set_napt(uint8_t on);
 
 /* 恢复出厂：擦除整个 NVS 命名空间（含热点凭据与页面热更标记）；调用方负责重启。 */
 void settings_factory_reset(void);

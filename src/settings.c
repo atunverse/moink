@@ -65,6 +65,11 @@ static const moink_settings_t DEFAULTS = {
     .wake_show   = 1,        /* R1.3.3：定时唤醒后自动切图，默认开启 */
     .ap_ssid     = "",
     .ap_pass     = "",
+    /* R1.3.5：默认不联网、不开转发 —— 升级后行为与旧固件完全一致 */
+    .wifi_n      = 0,
+    .wifi_last   = 0xFF,     /* 0xFF = 尚无成功记录 */
+    .net_on      = 0,
+    .napt_on     = 0,
 };
 
 /* 引脚 NVS 键名（逐个 u8 存；顺序与 PIN_IDX_* 一致）。 */
@@ -122,11 +127,37 @@ void settings_init(void)
     read_str("ap_ssid", s_cfg.ap_ssid, SETT_SSID_MAX);
     read_str("ap_pass", s_cfg.ap_pass, SETT_PASS_MAX);
 
+    /* R1.3.5：多 WiFi 记忆。计数与整块分别在两个键里：
+       "wn" = 有效个数，"wlist" = 8 项定长数组（784 B）。
+       旧固件没有这两个键 → wifi_n 保持 0，联网功能自然处于关闭态。 */
+    read_u8("wn", &s_cfg.wifi_n);
+    read_u8("wifi_last", &s_cfg.wifi_last);
+    read_u8("net_on", &s_cfg.net_on);
+    read_u8("napt_on", &s_cfg.napt_on);
+    if (s_ok) {
+        size_t need = 0;
+        if (nvs_get_blob(s_nvs, "wlist", NULL, &need) == ESP_OK &&
+            need == sizeof(s_cfg.wifi))
+            nvs_get_blob(s_nvs, "wlist", s_cfg.wifi, &need);
+    }
+
     /* R1.2.0：旧值不再做兼容归一；越界一律回落到默认档。 */
     if (s_cfg.panel >= EPD_PANEL_COUNT) s_cfg.panel = DEFAULTS.panel;
     if (s_cfg.hflip) s_cfg.hflip = 1;
     if (s_cfg.timeout_action > SETT_ACTION_OFF) s_cfg.timeout_action = SETT_ACTION_SLEEP;
     if (s_cfg.wake_show) s_cfg.wake_show = 1;
+
+    /* R1.3.5：WiFi 列表校正。计数越界即视为空；字符串强制收尾；
+       遇到空 SSID 就在该处截断，避免「中间空一格」让后续下标对不上。 */
+    if (s_cfg.wifi_n > SETT_WIFI_MAX) s_cfg.wifi_n = 0;
+    for (int i = 0; i < (int)s_cfg.wifi_n; i++) {
+        s_cfg.wifi[i].ssid[SETT_SSID_MAX - 1] = '\0';
+        s_cfg.wifi[i].pass[SETT_PASS_MAX - 1] = '\0';
+        if (s_cfg.wifi[i].ssid[0] == '\0') { s_cfg.wifi_n = (uint8_t)i; break; }
+    }
+    if (s_cfg.wifi_last >= SETT_WIFI_MAX) s_cfg.wifi_last = 0xFF;
+    s_cfg.net_on  = s_cfg.net_on  ? 1 : 0;
+    s_cfg.napt_on = s_cfg.napt_on ? 1 : 0;
 
     /* 引脚：预设档直接用预设表；自定义档校验失败则整体回落默认（避免半套引脚
        启动，把设备带进「屏不亮」的不可诊断状态）。 */
@@ -152,6 +183,12 @@ void settings_init(void)
              s_cfg.gpio_preset, s_cfg.pins.v[0], s_cfg.pins.v[1], s_cfg.pins.v[2],
              s_cfg.pins.v[3], s_cfg.pins.v[4], s_cfg.pins.v[5],
              s_cfg.pins.v[6], s_cfg.pins.v[7]);
+    ESP_LOGI(TAG, "net: on=%u napt=%u saved=%u last=%d",
+             s_cfg.net_on, s_cfg.napt_on, s_cfg.wifi_n,
+             s_cfg.wifi_last == 0xFF ? -1 : (int)s_cfg.wifi_last);
+    for (int i = 0; i < (int)s_cfg.wifi_n; i++)
+        ESP_LOGI(TAG, "  wifi[%d] '%s'%s", i, s_cfg.wifi[i].ssid,
+                 s_cfg.wifi[i].pass[0] ? "" : " (open)");
 }
 
 const moink_settings_t *settings_get(void) { return &s_cfg; }
@@ -286,6 +323,120 @@ esp_err_t settings_set_ap(const char *ssid, const char *pass)
         strlcpy(s_cfg.ap_pass, pass, SETT_PASS_MAX);
         store_str("ap_pass", s_cfg.ap_pass);
     }
+    settings_commit();
+    return ESP_OK;
+}
+
+/* ---------------- 多 WiFi 记忆（R1.3.5） ----------------
+ *
+ * 存储布局：u8 计数（键 "wn"）+ 定长数组（键 "wlist"，784 B）。
+ * 用 blob 而非 16 个逐键记录：增删改都要整体重排，「一次读、一次写」比逐键循环
+ * 更不容易出现「计数与内容不同步」。数组为空时删掉 blob，避免残留旧数据。
+ */
+
+static void store_wifi_list(void)
+{
+    if (!s_ok) return;
+    nvs_set_u8(s_nvs, "wn", s_cfg.wifi_n);
+    if (s_cfg.wifi_n > 0)
+        nvs_set_blob(s_nvs, "wlist", s_cfg.wifi, sizeof(s_cfg.wifi));
+    else
+        nvs_erase_key(s_nvs, "wlist");   /* 键不存在返回 NOT_FOUND，忽略 */
+    settings_commit();
+}
+
+int settings_wifi_count(void) { return (int)s_cfg.wifi_n; }
+
+const sett_wifi_t *settings_wifi_at(int i)
+{
+    if (i < 0 || i >= (int)s_cfg.wifi_n) return NULL;
+    return &s_cfg.wifi[i];
+}
+
+esp_err_t settings_wifi_add(const char *ssid, const char *pass)
+{
+    if (!ssid || !ssid[0]) return ESP_ERR_INVALID_ARG;
+    if (strlen(ssid) >= SETT_SSID_MAX) return ESP_ERR_INVALID_ARG;
+    if (pass && strlen(pass) >= SETT_PASS_MAX) return ESP_ERR_INVALID_ARG;
+
+    /* 已存在同名 SSID：只更新密码，并挪到首位（下次优先试它）。 */
+    int idx = -1;
+    for (int i = 0; i < (int)s_cfg.wifi_n; i++) {
+        if (strcmp(s_cfg.wifi[i].ssid, ssid) == 0) { idx = i; break; }
+    }
+
+    if (idx >= 0) {
+        strlcpy(s_cfg.wifi[idx].pass, pass ? pass : "", SETT_PASS_MAX);
+        if (idx != 0) {
+            sett_wifi_t tmp = s_cfg.wifi[idx];
+            memmove(&s_cfg.wifi[1], &s_cfg.wifi[0], sizeof(sett_wifi_t) * (size_t)idx);
+            s_cfg.wifi[0] = tmp;
+        }
+    } else {
+        /* 满了就挤掉最后一个，给新网络腾位置。 */
+        if (s_cfg.wifi_n >= SETT_WIFI_MAX) s_cfg.wifi_n = SETT_WIFI_MAX - 1;
+        memmove(&s_cfg.wifi[1], &s_cfg.wifi[0],
+                sizeof(sett_wifi_t) * (size_t)s_cfg.wifi_n);
+        strlcpy(s_cfg.wifi[0].ssid, ssid, SETT_SSID_MAX);
+        strlcpy(s_cfg.wifi[0].pass, pass ? pass : "", SETT_PASS_MAX);
+        s_cfg.wifi_n++;
+    }
+
+    s_cfg.wifi_last = 0;
+    store_wifi_list();
+    ESP_LOGI(TAG, "wifi add '%s': now %u saved", ssid, s_cfg.wifi_n);
+    return ESP_OK;
+}
+
+esp_err_t settings_wifi_remove(int i)
+{
+    if (i < 0 || i >= (int)s_cfg.wifi_n) return ESP_ERR_INVALID_ARG;
+
+    memmove(&s_cfg.wifi[i], &s_cfg.wifi[i + 1],
+            sizeof(sett_wifi_t) * (size_t)(s_cfg.wifi_n - i - 1));
+    s_cfg.wifi_n--;
+    memset(&s_cfg.wifi[s_cfg.wifi_n], 0, sizeof(sett_wifi_t));
+
+    /* 同步修正「上次成功」指针 */
+    if (s_cfg.wifi_last == i)                 s_cfg.wifi_last = 0xFF;
+    else if (s_cfg.wifi_last != 0xFF && s_cfg.wifi_last > i) s_cfg.wifi_last--;
+
+    store_wifi_list();
+    ESP_LOGI(TAG, "wifi remove #%d: now %u saved", i, s_cfg.wifi_n);
+    return ESP_OK;
+}
+
+esp_err_t settings_wifi_clear(void)
+{
+    s_cfg.wifi_n = 0;
+    s_cfg.wifi_last = 0xFF;
+    memset(s_cfg.wifi, 0, sizeof(s_cfg.wifi));
+    store_wifi_list();
+    ESP_LOGI(TAG, "wifi list cleared");
+    return ESP_OK;
+}
+
+void settings_wifi_mark_ok(int i)
+{
+    if (i < 0 || i >= (int)s_cfg.wifi_n) return;
+    if (s_cfg.wifi_last == (uint8_t)i) return;   /* 没变就不写 NVS，省擦写 */
+    s_cfg.wifi_last = (uint8_t)i;
+    store_u8("wifi_last", s_cfg.wifi_last);
+    settings_commit();
+}
+
+esp_err_t settings_set_net(uint8_t on)
+{
+    s_cfg.net_on = on ? 1 : 0;
+    store_u8("net_on", s_cfg.net_on);
+    settings_commit();
+    return ESP_OK;
+}
+
+esp_err_t settings_set_napt(uint8_t on)
+{
+    s_cfg.napt_on = on ? 1 : 0;
+    store_u8("napt_on", s_cfg.napt_on);
     settings_commit();
     return ESP_OK;
 }
