@@ -53,3 +53,15 @@ __pycache__/
 # ---- 编辑器 ----
 .vscode/
 .idea/
+
+# ---- 色彩探索的临时取样/推理产物（2026-11-05 归档时补）----
+_cal_*.npy
+_cal_*.png
+_red_photo_grid.png
+docs/_crop_*.png
+docs/_t8_cells.*
+docs/_jd79665*.txt
+docs/tmp/
+logs/
+.aoci/
+aoci*.txt
