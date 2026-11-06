@@ -230,9 +230,14 @@
  *   - ★ 热点转发（NAPT）：STA 拿到 IP 后调 esp_netif_napt_enable()，让连本机热点的
  *     设备经 STA 上网。sdkconfig 同步打开 CONFIG_LWIP_IP_FORWARD + CONFIG_LWIP_IPV4_NAPT
  *     （缺一不可，否则 napt_enable() 直接失败）。
- *   - ★ DNS 跟随：NAPT 只转发 IP、**不带 DNS relay**，若仍给客户端下发 192.168.4.1，
- *     手机能 ping 通却解析不了域名。故 NAPT 生效时把 DHCP DNS 改为上游 DNS；断开或
- *     关闭转发时恢复 192.168.4.1，保留门户劫持。
+ *   - ★ DNS 由本机代答/转发（2026-11-06 修订）：NAPT 只转发 IP、**不带 DNS relay**，
+ *     所以 DHCP 恒下发 192.168.4.1，由 captive 任务逐包决定「劫持」还是「转发上游」。
+ *     早先的「NAPT 时把 DHCP DNS 改成上游」已撤销 —— 客户端在租约内会绕过设备，
+ *     门户时间窗根本关不住。
+ *   - ★ 门户窗口：客户端连上热点后 60 s 内**只劫持系统探测域名**（其余域名照常解析，
+ *     网络同时可用）⇒ 有网也一定会弹一次登录页；60 s 后全部放行，手机判定有网并
+ *     自动关掉门户页。劫持应答 TTL 5 s，窗口一结束缓存即过期。
+ *   - ★ 深睡前先 esp_netif_napt_disable() 再 esp_wifi_stop()。
  *   - ★ AP 信道跟随：APSTA 共用一个射频，STA 连上后 AP 必须停在 STA 的信道。
  *     原固定 AP_CHANNEL(6) 仅在未连 STA 时生效；netif_ap_apply() 在已连接时读取
  *     当前信道，避免把 STA 踢下线。

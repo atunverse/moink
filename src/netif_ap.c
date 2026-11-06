@@ -107,29 +107,21 @@ static void dns_apply(esp_ip4_addr_t dns)
 }
 
 /*
- * NAPT 生效时，把热点 DHCP 下发的 DNS 换成上游 DNS。
+ * 热点 DHCP 一律下发门户地址 192.168.4.1（R1.3.5，2026-11-06 修订）。
  *
- * 为什么必须换：ESP-IDF 的 NAPT 只做 IP 转发，**不带 DNS relay**。
- * 若仍下发 192.168.4.1，手机能 ping 通 IP 却解析不了域名（表现为「连上了但没网」）。
- * NAPT 关闭时回落到本机地址，保留原有的门户劫持行为。
+ * 沿革：早先 NAPT 生效时把 DHCP DNS 换成上游，是因为 IDF 的 NAPT 不带 DNS relay，
+ * 不换手机就解析不了域名。代价是客户端在租约内一直用上游，设备插不上手。
+ *
+ * 现在改由 captive 任务自己做 DNS 转发（前 60 秒只劫持系统探测域名，之后全部
+ * 放行），所以这里保持固定值 —— 一旦在 NAPT 时换掉，客户端就绕过设备了，
+ * 「有网也弹一次」的时间窗根本不成立。
  */
-static void dns_follow_upstream(bool use_upstream)
+static void dns_set_portal(void)
 {
     if (!s_ap) return;
 
     esp_ip4_addr_t dns;
-    bool got = false;
-
-    if (use_upstream && s_napt && s_sta) {
-        esp_netif_dns_info_t up = { 0 };
-        if (esp_netif_get_dns_info(s_sta, ESP_NETIF_DNS_MAIN, &up) == ESP_OK &&
-            up.ip.type == ESP_IPADDR_TYPE_V4 && up.ip.u_addr.ip4.addr != 0) {
-            dns = up.ip.u_addr.ip4;
-            got = true;
-        }
-    }
-    if (!got) dns.addr = esp_ip4addr_aton("192.168.4.1");
-
+    dns.addr = esp_ip4addr_aton("192.168.4.1");
     dns_apply(dns);
 }
 
@@ -137,12 +129,16 @@ static void dns_follow_upstream(bool use_upstream)
 
 static void napt_apply(bool on)
 {
-    if (!s_sta) return;
+    if (!s_ap || !s_sta) return;
 
     bool want = on && settings_get()->napt_on;
     if (want == s_napt) return;
 
-    esp_err_t e = want ? esp_netif_napt_enable(s_sta) : esp_netif_napt_disable(s_sta);
+    /* ★ 必须传 AP 网卡（内网侧），不能传 STA。
+       lwIP 的 ip4_napt_enable() 是「按 IP 找网卡」来决定哪一侧算内网：
+       传 STA（192.168.1.26）会让手机来的 192.168.4.x 完全不匹配，包一个都不转发，
+       表现为 esp_netif_napt_enable() 返回 OK、状态显示已启用，但实际不通。 */
+    esp_err_t e = want ? esp_netif_napt_enable(s_ap) : esp_netif_napt_disable(s_ap);
     if (e == ESP_OK) {
         s_napt = want;
         ESP_LOGI(TAG, "napt %s", want ? "enabled (热点可上网)" : "disabled");
@@ -162,6 +158,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         if (id == WIFI_EVENT_AP_STACONNECTED) {
             wifi_event_ap_staconnected_t *e = (wifi_event_ap_staconnected_t *)data;
             ESP_LOGI(TAG, "station " MACSTR " joined", MAC2STR(e->mac));
+            /* 开一次 60 秒门户窗口：这段时间里只劫持系统探测域名，
+               让手机必定弹一次登录页，同时网络本身仍可用。 */
+            captive_portal_arm();
             return;
         }
         if (id == WIFI_EVENT_AP_STADISCONNECTED) {
@@ -175,9 +174,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
             ESP_LOGW(TAG, "sta: disconnected (reason %d)", e->reason);
             s_sta_up = false;
             s_sta_ip[0] = '\0';
-            /* 链路断了就把转发与上游 DNS 一起撤掉，回到「纯热点」状态。 */
+            /* 链路断了就撤掉转发，回到「纯热点」状态（DNS 始终是门户地址，不用动）。 */
             napt_apply(false);
-            dns_follow_upstream(false);
             s_sta_result = 0;
             if (s_sta_done) xSemaphoreGive(s_sta_done);
             return;
@@ -202,7 +200,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         ESP_LOGI(TAG, "sta: got ip %s on '%s' (ch %u)", s_sta_ip, s_sta_ssid, primary);
 
         napt_apply(true);
-        dns_follow_upstream(true);
 
         if (s_sta_done) xSemaphoreGive(s_sta_done);
         return;
@@ -392,9 +389,8 @@ void netif_ap_apply(void)
     netif_ap_apply_tx_power();
 
     configure_dhcp_portal();
-    /* 热点配置重建会把 DNS 打回 192.168.4.1；若 NAPT 正在工作要立刻恢复上游 DNS，
-       否则已连客户端会突然解析不了域名。 */
-    dns_follow_upstream(s_sta_up);
+    /* 热点配置重建会把 DNS 打回默认值，这里显式重设一次（幂等，值没变就不重启 DHCP）。 */
+    dns_set_portal();
 
     ESP_LOGI(TAG, "SoftAP '%s' up (open=%d, max %d, ch %u)",
              s_ssid, s->ap_pass[0] == 0, AP_MAX_CONN, ch);
@@ -447,7 +443,28 @@ int netif_sta_rssi(void)
 void netif_napt_refresh(void)
 {
     napt_apply(s_sta_up);
-    dns_follow_upstream(s_sta_up);
+}
+
+bool netif_upstream_dns(uint32_t *ip_be)
+{
+    if (!ip_be || !s_sta || !s_sta_up) return false;
+
+    esp_netif_dns_info_t up = { 0 };
+    if (esp_netif_get_dns_info(s_sta, ESP_NETIF_DNS_MAIN, &up) != ESP_OK) return false;
+    if (up.ip.type != ESP_IPADDR_TYPE_V4) return false;
+    if (up.ip.u_addr.ip4.addr == 0) return false;
+
+    *ip_be = up.ip.u_addr.ip4.addr;
+    return true;
+}
+
+void netif_shutdown_before_sleep(void)
+{
+    /* 深睡会 esp_wifi_stop()，先把 NAPT 撤掉，别让 lwIP 带着转发状态被硬停。 */
+    if (s_napt && s_ap) {
+        esp_netif_napt_disable(s_ap);
+        s_napt = false;
+    }
 }
 
 /* ---------------- 扫描附近 AP（配网用） ----------------

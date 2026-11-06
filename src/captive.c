@@ -1,4 +1,5 @@
 #include "captive.h"
+#include "netif_ap.h"      /* netif_napt_active() / netif_upstream_dns() */
 
 #include "esp_log.h"
 #include "lwip/sockets.h"
@@ -9,15 +10,24 @@
 #include <string.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <sys/time.h>
 
 static const char *TAG = "captive";
 
 #define DNS_PORT 53
-#define DNS_BUF  512
+#define DNS_BUF  1024              /* EDNS0 应答可达 1232，512 会截断 */
 #define APPLE_SUCCESS_WINDOW_MS 60000
+
+/* 门户窗口：客户端连上热点后，只有这段时间内才劫持系统探测域名。 */
+#define PORTAL_WINDOW_MS        60000
+/* 上游转发超时：正常 20~50 ms。超时就不回包，让客户端自己重试。 */
+#define DNS_UPSTREAM_TIMEOUT_MS 600
 
 static volatile bool s_apple_success_pending;
 static TickType_t s_apple_success_deadline;
+
+/* 门户窗口截止时刻（tick）；0 = 未开。多客户端取最晚的那个。 */
+static TickType_t s_portal_deadline;
 
 static void captive_arm_apple_success(void)
 {
@@ -41,6 +51,138 @@ void captive_apple_station_disconnected(void)
     /* Success 只服务于当前这次连接。用户主动断开后立即恢复门户，下一次连接
        无需等待超时或重启 ESP32；60 秒窗口只作为漏掉断开事件时的兜底。 */
     s_apple_success_pending = false;
+}
+
+/* ---------------- 门户窗口：有网也弹一次（R1.3.5） ----------------
+ *
+ * 为什么要自己转发 DNS：NAPT 生效后若把热点 DHCP 的 DNS 换成上游，
+ * 客户端在租约内就一直用上游，设备再也插不上手 —— 时间窗关不住。
+ * 所以 DHCP 一律下发 192.168.4.1，由本任务逐包决定「劫持还是转发」：
+ *
+ *   没在转发（未联网 / 用户关了 NAPT） -> 全劫持（本来就没外网，保住门户）
+ *   窗口内                             -> 只劫持系统探测域名，其余照常转发
+ *   窗口外                             -> 全部放行，手机判定「有网」自动关门户
+ */
+void captive_portal_arm(void)
+{
+    TickType_t end = xTaskGetTickCount() + pdMS_TO_TICKS(PORTAL_WINDOW_MS);
+    if (s_portal_deadline == 0 || (int32_t)(end - s_portal_deadline) > 0)
+        s_portal_deadline = end;
+}
+
+bool captive_portal_active(void)
+{
+    if (s_portal_deadline == 0) return false;
+    if ((int32_t)(s_portal_deadline - xTaskGetTickCount()) <= 0) {
+        s_portal_deadline = 0;
+        return false;
+    }
+    return true;
+}
+
+/* 把 DNS 查询名（length-prefixed labels）转成小写点分字符串。 */
+static bool qname_to_str(const uint8_t *p, int n, int off, char *out, size_t cap)
+{
+    size_t o = 0;
+    out[0] = '\0';
+    while (off < n) {
+        uint8_t len = p[off];
+        if (len == 0) return o > 0;
+        if ((len & 0xC0) == 0xC0) return false;      /* 查询名不带压缩指针 */
+        if (len > 63 || off + 1 + len > n) return false;
+        if (o + len + 2 > cap) return false;
+        if (o) out[o++] = '.';
+        for (uint8_t i = 0; i < len; i++) {
+            char ch = (char)p[off + 1 + i];
+            if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+            out[o++] = ch;
+        }
+        out[o] = '\0';
+        off += 1 + len;
+    }
+    return false;
+}
+
+/* 各系统的「联网探测」主机名。命中才劫持，其余域名照常解析。 */
+static const char *const kProbeHosts[] = {
+    "captive.apple.com",
+    "connectivitycheck.gstatic.com",
+    "connectivitycheck.android.com",
+    "connectivitycheck.platform.hicloud.com",
+    "connectivitycheck.cbg-app.huawei.com",
+    "www.msftconnecttest.com",
+    "www.msftncsi.com",
+    "detectportal.firefox.com",
+    "nmcheck.gnome.org",
+    "network-test.debian.org",
+};
+
+static bool is_probe_name(const char *name)
+{
+    size_t ln = strlen(name);
+    for (size_t i = 0; i < sizeof(kProbeHosts) / sizeof(kProbeHosts[0]); i++) {
+        const char *p = kProbeHosts[i];
+        size_t lp = strlen(p);
+        if (ln == lp && strcmp(name, p) == 0) return true;
+        if (ln > lp && name[ln - lp - 1] == '.' && strcmp(name + (ln - lp), p) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* 本包是否需要劫持。规则见上面的注释。 */
+static bool dns_should_hijack(const uint8_t *q, int n, const uint16_t *name_off,
+                              const uint16_t *qtype, const uint16_t *qclass,
+                              uint16_t qdcount)
+{
+    if (!netif_napt_active()) return true;
+    if (!captive_portal_active()) return false;
+
+    char name[128];
+    for (uint16_t i = 0; i < qdcount; i++) {
+        if (qtype[i] != 1 || qclass[i] != 1) continue;
+        if (qname_to_str(q, n, name_off[i], name, sizeof(name)) && is_probe_name(name))
+            return true;
+    }
+    return false;
+}
+
+/* 原样转发给上游 DNS 并回给客户端。
+ * ★ 串行阻塞最多 DNS_UPSTREAM_TIMEOUT_MS：DNS 本来就是串行应答，
+ *   上游正常时 20~50 ms，代价可接受；超时就不回包（客户端会重试）。 */
+static int s_up_sock = -1;
+static uint8_t s_fwd_buf[DNS_BUF];
+
+static void forward_upstream(int cli_sock, const uint8_t *q, int n,
+                             const struct sockaddr_in *from, socklen_t fl)
+{
+    uint32_t dns_ip = 0;
+    if (!netif_upstream_dns(&dns_ip)) return;
+
+    if (s_up_sock < 0) {
+        s_up_sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (s_up_sock < 0) return;
+        struct timeval tv = { 0, DNS_UPSTREAM_TIMEOUT_MS * 1000 };
+        setsockopt(s_up_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    }
+
+    struct sockaddr_in to = {
+        .sin_family = AF_INET,
+        .sin_port = htons(DNS_PORT),
+        .sin_addr.s_addr = dns_ip,
+    };
+    if (sendto(s_up_sock, q, n, 0, (const struct sockaddr *)&to, sizeof(to)) < 0) {
+        close(s_up_sock);
+        s_up_sock = -1;
+        return;
+    }
+
+    struct sockaddr_in src;
+    socklen_t sl = sizeof(src);
+    int m = recvfrom(s_up_sock, s_fwd_buf, sizeof(s_fwd_buf), 0,
+                     (struct sockaddr *)&src, &sl);
+    if (m > 0)
+        sendto(cli_sock, s_fwd_buf, m, 0, (const struct sockaddr *)from, fl);
 }
 
 static esp_err_t captive_apple_success(httpd_req_t *req)
@@ -96,7 +238,8 @@ static void dns_task(void *arg)
     }
     ESP_LOGI(TAG, "DNS hijack on :%d -> 192.168.4.1", DNS_PORT);
 
-    uint8_t q[DNS_BUF], r[DNS_BUF];
+    /* 1024×2 放静态区而不是 3 KB 的任务栈上（转发还要再用一份）。 */
+    static uint8_t q[DNS_BUF], r[DNS_BUF];
 
     for (;;) {
         struct sockaddr_in from;
@@ -135,6 +278,12 @@ static void dns_task(void *arg)
         }
         if (!packet_valid) continue;
 
+        /* 窗口/域名决定这一包的去向：不劫持就原样转发给上游。 */
+        if (!dns_should_hijack(q, n, name_off, qtype, qclass, qdcount)) {
+            forward_upstream(sock, q, n, &from, fl);
+            continue;
+        }
+
         memset(r, 0, sizeof(r));
         r[0] = q[0]; r[1] = q[1];             /* 事务 ID 原样回 */
         r[2] = 0x84 | (q[2] & 0x01);          /* QR=1、AA=1，保留 RD */
@@ -154,7 +303,7 @@ static void dns_task(void *arg)
             r[a++] = (uint8_t)(ptr >> 8); r[a++] = (uint8_t)ptr;
             r[a++] = 0x00; r[a++] = 0x01;     /* TYPE  = A   */
             r[a++] = 0x00; r[a++] = 0x01;     /* CLASS = IN  */
-            r[a++] = 0x00; r[a++] = 0x00; r[a++] = 0x00; r[a++] = 0x3C; /* TTL 60 */
+            r[a++] = 0x00; r[a++] = 0x00; r[a++] = 0x00; r[a++] = 0x05; /* TTL 5 */
             r[a++] = 0x00; r[a++] = 0x04;     /* RDLEN = 4  */
             r[a++] = 192; r[a++] = 168; r[a++] = 4; r[a++] = 1;
             ancount++;
@@ -174,6 +323,23 @@ void captive_dns_start(void)
 
 esp_err_t captive_redirect(httpd_req_t *req)
 {
+    /* 窗口过期后放行：给 OS 的探测请求它期待的结果，否则状态栏的
+       「需登录」图标一直挂着、门户页也不会自动关。 */
+    if (!captive_portal_active()) {
+        if (strstr(req->uri, "generate_204") || strstr(req->uri, "gen_204")) {
+            httpd_resp_set_status(req, "204 No Content");
+            return httpd_resp_send(req, NULL, 0);
+        }
+        if (strstr(req->uri, "connecttest.txt")) {
+            httpd_resp_set_type(req, "text/plain");
+            return httpd_resp_sendstr(req, "Microsoft Connect Test");
+        }
+        if (strstr(req->uri, "ncsi.txt")) {
+            httpd_resp_set_type(req, "text/plain");
+            return httpd_resp_sendstr(req, "Microsoft NCSI");
+        }
+    }
+
     /* 303 + 非空正文可让 iOS Captive Network Assistant 识别。Location 必须
        使用绝对 URL；Vivo 的 captive WebView 会把相对地址解析成 file:///。 */
     httpd_resp_set_status(req, "303 See Other");
@@ -198,6 +364,9 @@ esp_err_t captive_apple_landing(httpd_req_t *req)
     }
 
     if (captive_apple_success_active()) return captive_apple_success(req);
+
+    /* 窗口过期：直接把标准 Success 给回去，手机据此判定有网并关闭门户页。 */
+    if (!captive_portal_active()) return captive_apple_success(req);
 
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "Pragma", "no-cache");

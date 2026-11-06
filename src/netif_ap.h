@@ -64,8 +64,15 @@ int netif_sta_trying(void);
 /* NAPT 是否已启用（热点转发实际生效中）。 */
 bool netif_napt_active(void);
 
-/* 设置里的 napt_on 改变后调用：立即按新开关重估转发与上游 DNS，不打断 STA 连接。 */
+/* 设置里的 napt_on 改变后调用：立即按新开关重估转发，不打断 STA 连接。 */
 void netif_napt_refresh(void);
+
+/* 上游 DNS（网络字节序 IPv4）。未联网返回 false。
+ * captive 任务转发 DNS 查询时用；拿不到就不回包，让客户端自己重试。 */
+bool netif_upstream_dns(uint32_t *ip_be);
+
+/* 深睡前调用：撤掉 NAPT，避免 lwIP 带着转发状态被 esp_wifi_stop() 硬停。 */
+void netif_shutdown_before_sleep(void);
 
 /* ---------------- 扫描附近 AP（R1.3.5 配网用） ---------------- */
 

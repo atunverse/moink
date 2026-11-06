@@ -29,6 +29,11 @@
 #define FRAME_FMT_VERSION 1          /* 基础格式（768x552 载荷） */
 #define FRAME_FMT_VERSION_NATIVE 2   /* A1 原生 800x600 载荷 */
 
+/* 尽早抢下帧缓冲（R1.3.5 修 OOM）：启动过程会把 DRAM 大块切碎，
+   到 frame_init() 时最大连续块可能已小于 120 KB。必须在 app_main 最前面调用。
+   可重复调用，已分配则直接返回。 */
+void frame_prealloc(void);
+
 /* 分配帧缓冲并创建同步量。 */
 void frame_init(void);
 

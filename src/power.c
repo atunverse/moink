@@ -1,5 +1,6 @@
 #include "power.h"
 #include "epd_drv.h"
+#include "netif_ap.h"     /* netif_shutdown_before_sleep() */
 #include "settings.h"
 
 #include "driver/gpio.h"
@@ -101,6 +102,7 @@ bool power_should_sleep(void)
 
 void power_enter_deep_sleep(void)
 {
+    netif_shutdown_before_sleep();   /* 先撤 NAPT，再停 WiFi */
     esp_wifi_stop();
     epd_panel_deep_sleep();
 

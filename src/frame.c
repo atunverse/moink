@@ -4,6 +4,7 @@
 #include "store.h"
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -34,13 +35,25 @@ static uint16_t crc16_update(uint16_t crc, const uint8_t *d, size_t n)
     return crc;
 }
 
-void frame_init(void)
+void frame_prealloc(void)
 {
+    if (s_fb) return;
     s_fb = malloc(EPD_MAX_BUF_LEN);
     if (!s_fb) {
-        ESP_LOGE(TAG, "OOM allocating %d-byte frame buffer", EPD_MAX_BUF_LEN);
+        /* 诊断（R1.3.5）：OOM 时把三个数字打全——总量够不够 / 有没有连续块 /
+           历史最低水位，一眼能分清「真不够」和「被切碎」。 */
+        ESP_LOGE(TAG, "OOM %d bytes: free=%u largest=%u min=%u",
+                 EPD_MAX_BUF_LEN,
+                 (unsigned)esp_get_free_heap_size(),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                 (unsigned)esp_get_minimum_free_heap_size());
         abort();
     }
+}
+
+void frame_init(void)
+{
+    frame_prealloc();          /* 正常已在 app_main 最前面抢好，这里是兜底 */
     s_fb_mutex = xSemaphoreCreateMutex();
     s_frame_ready = xSemaphoreCreateBinary();
     s_fw = epd_profile()->w;

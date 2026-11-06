@@ -35,6 +35,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_sleep.h"
@@ -1085,7 +1086,19 @@ void app_main(void)
     gpio_config(&self_lock);
     gpio_set_level((gpio_num_t)PIN_SELF_LOCK, 1);
 
+    /* ★ 帧缓冲必须在这里抢（R1.3.5 修启动 OOM）：NVS / settings / 任务栈 /
+       WiFi 初始化会把 DRAM 大块切碎，实测到 frame_init() 时最大连续块只剩
+       118,784 B < 120,000 B，直接 abort 进重启循环。此刻最大块 126,976 B，
+       是全程唯一还够用的时刻。 */
+    frame_prealloc();
+
     ESP_LOGI(TAG, "=== MoInk %s | 4-color | ap + unified upgrade ===", MOINK_VERSION);
+    /* 诊断（R1.3.5）：日志级别被压到 ERROR，这里用 LOGE 保证能看见。
+       三处采样点 = 最早 / 分配帧缓冲前 / 起 WiFi 后，用来定位内存被谁吃掉。 */
+    ESP_LOGE(TAG, "[heap] boot    free=%u largest=%u min=%u",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)esp_get_minimum_free_heap_size());
 
     /* NVS */
     esp_err_t err = nvs_flash_init();
@@ -1136,11 +1149,21 @@ void app_main(void)
     epd_set_panel((epd_panel_t)settings_get()->panel);
     epd_set_hflip(settings_get()->hflip != 0);
 
+    ESP_LOGE(TAG, "[heap] pre-fb  free=%u largest=%u min=%u",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)esp_get_minimum_free_heap_size());
+
     frame_init();
     netif_ap_init();
     /* R1.3.5：STA 连接任务独立跑，连不上只影响「能否上网」，不影响热点与本地功能。 */
     netif_sta_start();
     captive_dns_start();
+
+    ESP_LOGE(TAG, "[heap] post-net free=%u largest=%u min=%u",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)esp_get_minimum_free_heap_size());
 
     if (start_server() == NULL) {
         ESP_LOGE(TAG, "HTTP server failed to start");

@@ -323,15 +323,48 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
 
 - 转发：`esp_netif_napt_enable(sta_netif)`，编译期依赖 `CONFIG_LWIP_IP_FORWARD` +
   `CONFIG_LWIP_IPV4_NAPT`（缺一 `napt_enable()` 直接失败）。
-- ★ **ESP-IDF 的 NAPT 不带 DNS relay**：若不改 DHCP 下发的 DNS，客户端能 ping 通 IP
-  却解析不了域名（表现为「连上了但没网」）。因此转发生效时把 AP 的 DHCP DNS 改为上游
-  DNS；断开或关闭转发时恢复 `192.168.4.1`，保留原有门户劫持。
+- ★ **DHCP 一律下发 `192.168.4.1`，DNS 由本机 captive 任务代答或转发**（2026-11-06 修订）。
+  早先的做法是 NAPT 生效时把 DHCP DNS 换成上游 —— 那样手机确实能解析域名，但客户端在
+  **租约期内一直用上游**，设备再也插不上手，门户窗口根本关不住。现在改成设备自己当 DNS：
+  逐包决定「劫持」还是「原样转发给上游」（详见 §6.3.5）。
+  ★ ESP-IDF 的 NAPT 本身**不带 DNS relay**，所以这段转发必须由固件实现，不能省。
 - ★ **AP 信道跟随 STA**：APSTA 共用一个射频，STA 连上后 AP 必须停在该信道。
   固件在已连接时先 `esp_wifi_get_channel()` 再写 AP 配置，避免把 STA 踢下线；
   原固定信道 6 只在未连 STA 时生效。
 - 代价：AP+STA 分时共用射频，转发吞吐约为单 STA 的一半；lwIP 转发路径多占约 8~16 KB。
 
-#### 6.3.4 扫描附近 WiFi（`/api/scan`）
+#### 6.3.4 门户窗口：有网也弹一次（R1.3.5 起）
+
+目标：设备已经能上网（NAPT 生效）时，手机连上热点**仍然弹一次登录页**，但不影响上网。
+
+判定链路：
+
+| 条件 | DNS 行为 | HTTP 行为 |
+|---|---|---|
+| NAPT 未生效（没联网 / 用户关了转发） | **全部劫持**到 `192.168.4.1` | 探测路径返回门户页（原有行为） |
+| NAPT 生效 且 窗口内（≤60 s） | **只劫持系统探测域名**，其余域名转发上游 | 探测路径返回门户页 → 手机弹窗 |
+| NAPT 生效 且 窗口外 | **全部转发**上游 | 探测路径返回标准成功响应 → 手机判定有网、自动关门户 |
+
+- 窗口起点：`WIFI_EVENT_AP_STACONNECTED`（**每有一个客户端连上就重新计 60 s**，多客户端取最晚）。
+- 劫持主机名白名单（精确或 `.` 后缀匹配）：`captive.apple.com`、
+  `connectivitycheck.gstatic.com`、`connectivitycheck.android.com`、
+  `connectivitycheck.platform.hicloud.com`、`connectivitycheck.cbg-app.huawei.com`、
+  `www.msftconnecttest.com`、`www.msftncsi.com`、`detectportal.firefox.com`、
+  `nmcheck.gnome.org`、`network-test.debian.org`。
+- 劫持应答 **TTL = 5 s**（原 60 s）：窗口一结束，缓存立刻过期，客户端下次查询即走上游。
+- 窗口外 HTTP 放行：`/generate_204`、`/gen_204` → `204 No Content`；
+  `/connecttest.txt` → `Microsoft Connect Test`；`/ncsi.txt` → `Microsoft NCSI`；
+  `/hotspot-detect.html`、`/library/test/success.html` → 标准 `Success` 页。
+- 转发：串行，单次上游超时 **600 ms**；上游不可达就不回包（客户端自行重试）。
+  A 记录以外（AAAA / HTTPS 等）仍按原逻辑回 NOERROR 空答案，避免客户端走 IPv6。
+- ★ 已知副作用：**窗口结束后手机判定有网，门户页会被系统自动关掉** —— 若用户此刻正在
+  填密码，页面会消失，需重新访问 `192.168.4.1`。
+- ★ 开启「私人 DNS / 加密 DNS（DoH）」的手机会绕过本机 DNS，**永远不弹门户**
+  （这是既有局限，不是本次引入）。
+- 内存：`/api/scan` 之外，DNS 收发缓冲改为静态 `1024 × 3`（查询 / 劫持应答 / 转发应答），
+  从 3 KB 的 DNS 任务栈移到 `.bss`；任务栈不变。
+
+#### 6.3.5 扫描附近 WiFi（`/api/scan`）
 
 - 目的：配网时不用手打 SSID —— 扫出来点一下就把名称填进输入框，只需再输密码。
 - 参数：`WIFI_SCAN_TYPE_ACTIVE`，全信道（`channel=0`），80~120 ms/信道，隐藏 SSID 不列；
