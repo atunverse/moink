@@ -235,6 +235,7 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
 | GET | `/api/carousel/list` | 图库列表 JSON：`{slots,count,cur,items[{slot,fmt,w,h,len,data}]}`，`data` = 缩略图 base64（`fmt=2` 为彩色 JPEG，`fmt=1` 为 2bit 帧） |
 | GET | `/api/carousel/full?slot=N` | 整帧二进制（16B 头 + 2bpp 载荷），供网页大图预览；流式读 flash 分块发送 |
 | POST | `/api/carousel/delete?slot=N` | 删除**逻辑槽** N：只清 `alive` 位图对应位 + `count--` / `cur` 修正，**不搬移数据、flash 零擦写**（R1.3.4）。状态码见 §6.2 |
+| POST | `/api/carousel/show?slot=N` | 切到第 N 张（R1.3.5，供网页大图预览的「显示到屏幕」）：只校验并投递显示事件，**不等刷屏**（四色整屏 2~45 s），刷屏成功后才更新 `cur`。空槽 / 越界 `404 no such slot`，显示队列满 `503 busy` |
 | POST | **`/api/upload`** | **★ 统一升级入口（R1.2.0，FB-015）**：按请求体首块内容自动识别固件 / 控制页，见 §6.1 |
 | POST | `/api/web/clear` | 清空 web 分区（回到内嵌页） |
 | POST | `/api/clear` | 残影清理（可选 `cycles` 1–4） |

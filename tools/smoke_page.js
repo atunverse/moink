@@ -59,6 +59,12 @@ ok("startup block intact (loadSettings call present)", /loadSettings\(\)/.test(j
 ok("page version meta present (R1.x.y)", /moink-page-version" content="R1\.\d+\.\d+"/.test(page));
 // 10. R1.0.18 UI 重构：齿轮入口 / 返回按钮 / 无页签 / 步骤条 / 设备信息网格 / 分栏 / 文案
 ok("R1.0.18 gear + back nav present", page.includes('id="gearBtn"') && page.includes('id="backBtn"'));
+ok("mobile viewport zoom disabled while Cropper touch zoom remains enabled",
+   page.includes('maximum-scale=1, user-scalable=no')
+   && page.includes('touch-action:pan-x pan-y')
+   && js.includes('document.addEventListener("gesturestart", stopViewportGesture, { passive:false })')
+   && js.includes('document.addEventListener("gesturechange", stopViewportGesture, { passive:false })')
+   && js.includes('zoomOnTouch: true'));
 ok("R1.0.18 tab bar removed", page.indexOf('data-t="image"') < 0 && page.indexOf('id="tabs"') < 0);
 ok("R1.0.18 subtitle", page.includes("把喜欢的瞬间，放在身边"));
 ok("R1.0.18 header version line removed", page.indexOf('id="i-fw"') < 0);
@@ -283,11 +289,15 @@ ok("R1.2.1 文字框仅当前会话有效，重新打开页面为空",
    && js.indexOf("cfg.objsImg = [];") >= 0
    && js.indexOf("cfg.objsNote = [];") >= 0
    && js.indexOf('if (!o){ txtEl.value = ""; return; }') >= 0);
-ok("R1.2.1 文字拖动全尺寸并复用 DOM 手柄",
-   js.indexOf("liveBase = renderBase(EW, EH)") >= 0
+ok("文字拖动缓存静态画布、文字度量和缩放，并保留对象叠放顺序",
+   js.indexOf("liveBase = renderLiveBase(EW, EH, od ? od.i : -1)") >= 0
    && js.indexOf("function ensureObjHandles(el)") >= 0
    && js.indexOf('if (el.querySelector(".hnd")) return') >= 0
-   && js.indexOf('if (od) relayoutOne(od.i, od.act === "m" || od.act === "r")') >= 0
+   && js.includes('if (od) relayoutOne(od.i, od.act === "m" || od.act === "r", od.scale)')
+   && js.includes('ctx.drawImage(liveBase, 0, 0)')
+   && js.includes('if (liveAbove) ctx.drawImage(liveAbove, 0, 0)')
+   && js.includes('liveMetric = o ? objMetrics(o, 1) : null')
+   && js.includes('scale:dragScale') && js.includes('var s = od.scale')
    && js.indexOf('el.textContent = "";\n  var hS') < 0);
 // R1.2.2：A0 / A1 几何一致（768x552），几何助手收敛为常量分支。
 ok("R1.2.2 applyPanelGeom(A1) keeps 768x552 and returns false",
@@ -399,9 +409,16 @@ ok("R1.3.2 固件侧：轮播元数据多键单次 commit",
    storeC.indexOf("static int st_nvs_set_u8s(") >= 0
    && storeC.indexOf("st_nvs_set_u8s(KEY_COUNT") >= 0
    && (storeC.split("st_nvs_set_u8(KEY_CUR").length - 1) === 0);
-ok("R1.3.2 固件侧：carousel_next 刷屏成功后才推进 cur",
-   mainC.indexOf("if (frame_display_slot(next) != 0)") >= 0
-   && mainC.indexOf("store_meta_set(count, next);") >= 0);
+ok("R1.3.2 固件侧：carousel_show 刷屏成功后才推进 cur（carousel_next 经它切图）",
+   mainC.indexOf("if (frame_display_slot(slot) != 0)") >= 0
+   && mainC.indexOf("store_meta_set(count, slot);") >= 0
+   && mainC.indexOf("carousel_show((cur + 1) % count);") >= 0);
+ok("预览窗口「显示到屏幕」：页面按钮 + 固件 /api/carousel/show 经显示队列切图",
+   page.indexOf('id="prevShow"') >= 0
+   && page.indexOf('/api/carousel/show?slot=') >= 0
+   && mainC.indexOf('"/api/carousel/show"') >= 0
+   && mainC.indexOf("ui_post_msg(UI_EV_CAROUSEL_SHOW, slot)") >= 0
+   && mainC.indexOf("sizeof(ui_msg_t)") >= 0);
 ok("R1.3.2 页面：设备信息显示「本次唤醒」",
    page.indexOf('id="i-wake"') >= 0
    && js.indexOf("wakeTxt") >= 0 && js.indexOf("j.wake_reason") >= 0);

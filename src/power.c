@@ -119,7 +119,11 @@ void power_enter_deep_sleep(void)
     gpio_hold_en((gpio_num_t)PIN_SELF_LOCK);
     gpio_deep_sleep_hold_en();
 
-    uint32_t wake_s = settings_get()->wake_s;
+    /* 超时动作 = 关机时不设定时唤醒：无自锁电路会退回深睡（见
+       power_self_lock_off），若仍按 wake_s 挂定时器，「关机」会变成
+       「定时开机」。只有「休眠」动作才需要定时唤醒。 */
+    uint32_t wake_s = (settings_get()->timeout_action == SETT_ACTION_SLEEP)
+                      ? settings_get()->wake_s : 0;
     if (wake_s > 0) {
         esp_sleep_enable_timer_wakeup((uint64_t)wake_s * 1000000ULL);
     }

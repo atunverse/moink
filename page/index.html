@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="moink-page-version" content="R1.3.5">
 <title>墨印 · MoInk</title>
 <style>
@@ -19,7 +19,7 @@
 :root{ --bg:#faf7f2; --card:#fff; --line:#eee6da; --ink:#2b2620; --mut:#9a8f7d;
        --acc:#e07a3f; --acc2:#3f7d6b; --ok:#2e7d4f; --err:#c0392b; }
 *{ box-sizing:border-box; }
-html,body{ margin:0; padding:0; }
+html,body{ margin:0; padding:0; touch-action:pan-x pan-y; }
 body{ background:var(--bg); color:var(--ink);
       font-family:-apple-system,'PingFang SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif;
       font-size:15px; line-height:1.55; -webkit-text-size-adjust:100%; }
@@ -220,13 +220,18 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
 #prevOverlay{ position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:99;
   display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; }
 #prevCanvas{ max-width:92vw; max-height:78vh; background:#fff; border-radius:4px; }
+.prevBar{ display:flex; gap:10px; }
 </style>
 </head>
 <body>
 <!-- R1.3.1 大图预览层：必须在所有 <script> 之前，图库 JS 顶层绑定 $("prevClose")/$("prevOverlay") 依赖它先存在 -->
 <div id="prevOverlay" style="display:none">
   <canvas id="prevCanvas"></canvas>
-  <button class="mini" id="prevClose">关闭预览</button>
+  <div class="prevBar">
+    <button id="prevShow">显示到屏幕</button>
+    <button class="mini" id="prevClose">关闭预览</button>
+  </div>
+  <span class="savestate" id="prevmsg"></span>
 </div>
 
 <div id="workLoading" aria-hidden="true">
@@ -1097,42 +1102,42 @@ function objMetrics(o, s){
   for (j = 0; j < lines.length; j++) mw = Math.max(mw, mc.measureText(lines[j]).width);
   return { lines:lines, mw:mw, blockH:blockH, lh:lh, pX:sz*0.28, pY:sz*0.18 };
 }
+function drawObj(ctx, o, cw, measured){
+  var t = String(o.text == null ? "" : o.text);
+  if (!t.replace(/\s+$/, "")) return;
+  var s = cw / EW;
+  var m = measured || objMetrics(o, s);
+  if (!m.lines.length) return;
+  ctx.save();
+  ctx.translate((+o.x||0)*s, (+o.y||0)*s);
+  ctx.rotate((+o.rot||0)*Math.PI/180);
+  var f = FONTS[clamp(+o.font|0, 0, FONTS.length-1)];
+  var sz = Math.max(6, (+o.size||48)*s);
+  ctx.font = f.w + " " + sz + "px " + f.css;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  if (+o.bg >= 1){
+    var bgp = PAL[[1, 0, 2, 3][+o.bg - 1]];   /* R1.0.19 四色底：1白 2黑 3黄 4红 */
+    ctx.fillStyle = "rgb(" + bgp[0] + "," + bgp[1] + "," + bgp[2] + ")";
+    ctx.fillRect(-m.mw/2 - m.pX, -m.blockH/2 - m.pY, m.mw + m.pX*2, m.blockH + m.pY*2);
+  }
+  var fg = PAL[clamp(+o.color|0, 0, 3)];
+  var sw = clamp(+o.stroke||0, 0, 10) * s;
+  for (var j = 0; j < m.lines.length; j++){
+    var yy = -m.blockH/2 + m.lh/2 + j*m.lh;
+    if (sw > 0){
+      ctx.lineWidth = sw*2; ctx.lineJoin = "round";
+      var sp = PAL[clamp(+o.strokeC|0, 0, 3)];   /* R1.0.19 四色描边 */
+      ctx.strokeStyle = "rgb(" + sp[0] + "," + sp[1] + "," + sp[2] + ")";
+      ctx.strokeText(m.lines[j], 0, yy);
+    }
+    ctx.fillStyle = "rgb("+fg[0]+","+fg[1]+","+fg[2]+")";
+    ctx.fillText(m.lines[j], 0, yy);
+  }
+  ctx.restore();
+}
 function drawObjs(ctx, objs, cw, ch){
   if (!objs || !objs.length) return;
-  var s = cw / EW, i;
-  for (i = 0; i < objs.length; i++){
-    var o = objs[i];
-    var t = String(o.text == null ? "" : o.text);
-    if (!t.replace(/\s+$/, "")) continue;
-    var m = objMetrics(o, s);
-    if (!m.lines.length) continue;
-    ctx.save();
-    ctx.translate((+o.x||0)*s, (+o.y||0)*s);
-    ctx.rotate((+o.rot||0)*Math.PI/180);
-    var f = FONTS[clamp(+o.font|0, 0, FONTS.length-1)];
-    var sz = Math.max(6, (+o.size||48)*s);
-    ctx.font = f.w + " " + sz + "px " + f.css;
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    if (+o.bg >= 1){
-      var bgp = PAL[[1, 0, 2, 3][+o.bg - 1]];   /* R1.0.19 四色底：1白 2黑 3黄 4红 */
-      ctx.fillStyle = "rgb(" + bgp[0] + "," + bgp[1] + "," + bgp[2] + ")";
-      ctx.fillRect(-m.mw/2 - m.pX, -m.blockH/2 - m.pY, m.mw + m.pX*2, m.blockH + m.pY*2);
-    }
-    var fg = PAL[clamp(+o.color|0, 0, 3)];
-    var sw = clamp(+o.stroke||0, 0, 10) * s;
-    for (var j = 0; j < m.lines.length; j++){
-      var yy = -m.blockH/2 + m.lh/2 + j*m.lh;
-      if (sw > 0){
-        ctx.lineWidth = sw*2; ctx.lineJoin = "round";
-        var sp = PAL[clamp(+o.strokeC|0, 0, 3)];   /* R1.0.19 四色描边 */
-        ctx.strokeStyle = "rgb(" + sp[0] + "," + sp[1] + "," + sp[2] + ")";
-        ctx.strokeText(m.lines[j], 0, yy);
-      }
-      ctx.fillStyle = "rgb("+fg[0]+","+fg[1]+","+fg[2]+")";
-      ctx.fillText(m.lines[j], 0, yy);
-    }
-    ctx.restore();
-  }
+  for (var i = 0; i < objs.length; i++) drawObj(ctx, objs[i], cw);
 }
 function toBuf(canvas){
   var w = canvas.width, h = canvas.height;
@@ -1190,7 +1195,7 @@ function getCropCanvas(cw, ch){
   return cv;
 }
 /* 底图（L0+L1，无文字）：拍立得 = 白底+留白+风格化图像层；便签 = 纯底色。
-   R1.0.15 拖动实时重绘：底图量化只在手势开始做一次（renderBase 缓存 ImageData），
+   R1.0.15 拖动实时重绘：底图量化只在手势开始做一次（renderLiveBase 缓存画布），
    文字每帧矢量重画 —— 画布是唯一视觉源，拖动中每帧即最终合成效果。 */
 function drawBase(ctx, cw, ch){
   if (MODE === 0){
@@ -1245,23 +1250,45 @@ function renderTo(cv, cw, ch){
   ctx.putImageData(im, 0, 0);
   return idx;
 }
-/* ---------- 拖动实时重绘（Fabric 模式：画布唯一视觉源，DOM 只剩手柄） ---------- */
-var liveBase = null, liveRaf = 0;
-function renderBase(cw, ch){
+/* ---------- 拖动实时重绘（缓存图片与未选中文字，每帧只画当前文字） ---------- */
+var liveBase = null, liveAbove = null, liveMetric = null, liveRaf = 0;
+function renderLiveBase(cw, ch, skipIndex){
   var cv = document.createElement("canvas");
   cv.width = cw; cv.height = ch;
-  var ctx = cv.getContext("2d", { willReadFrequently: true });
+  var ctx = cv.getContext("2d");
   drawBase(ctx, cw, ch);
-  return ctx.getImageData(0, 0, cw, ch);
+  var objs = (MODE === 0 && !cfg.textOn) ? [] : curObjs();
+  /* 保留对象叠放顺序：当前文字之前的对象烤入底层，之后的对象缓存为透明上层。 */
+  liveAbove = null;
+  var aboveCtx = null;
+  for (var i = 0; i < objs.length; i++){
+    if (i === skipIndex) continue;
+    if (skipIndex >= 0 && i > skipIndex){
+      if (!liveAbove){
+        liveAbove = document.createElement("canvas");
+        liveAbove.width = cw; liveAbove.height = ch;
+        aboveCtx = liveAbove.getContext("2d");
+      }
+      drawObj(aboveCtx, objs[i], cw);
+    } else drawObj(ctx, objs[i], cw);
+  }
+  return cv;
 }
 function liveDraw(){
   liveRaf = 0;
   if (!liveBase) return;
   /* 指针事件可能高于屏幕刷新率；DOM 几何与画布统一在 RAF 中各更新一次。 */
-  if (od) relayoutOne(od.i, od.act === "m" || od.act === "r");
+  if (od) relayoutOne(od.i, od.act === "m" || od.act === "r", od.scale);
   var ctx = prevEl.getContext("2d");
-  ctx.putImageData(liveBase, 0, 0);
-  drawObjs(ctx, (MODE === 0 && !cfg.textOn) ? [] : curObjs(), prevEl.width, prevEl.height);  /* R1.0.17 */
+  ctx.drawImage(liveBase, 0, 0);
+  if (od){
+    var o = curObjs()[od.i];
+    if (o){
+      if (od.act === "s" || od.act === "wl") liveMetric = objMetrics(o, prevEl.width / EW);
+      drawObj(ctx, o, prevEl.width, liveMetric);
+    }
+  }
+  if (liveAbove) ctx.drawImage(liveAbove, 0, 0);
 }
 function scheduleLive(){
   if (!liveRaf && liveBase) liveRaf = requestAnimationFrame(liveDraw);
@@ -1270,9 +1297,11 @@ function startLive(){
   clearTimeout(previewTimer); previewWant = null;  /* 挂起排队的预览，拖动期间画布归实时重绘管 */
   try {
     prevEl.width = EW; prevEl.height = EH;
-    liveBase = renderBase(EW, EH);
+    liveBase = renderLiveBase(EW, EH, od ? od.i : -1);
+    var o = od && curObjs()[od.i];
+    liveMetric = o ? objMetrics(o, 1) : null;
     liveDraw();
-  } catch(e){ liveBase = null; }
+  } catch(e){ liveBase = null; liveAbove = null; liveMetric = null; }
 }
 
 /* 竖屏桥接：编辑空间(552x768 或 600x800)顺时针转 90° → 设备帧(768x552 或 800x600)。
@@ -1408,6 +1437,10 @@ function frameWithHeader(payload){
    DOM 与状态
    ================================================================== */
 var $ = function(id){ return document.getElementById(id); };
+/* 禁止 Safari 放大整页；裁剪区的图片缩放仍由 Cropper 处理。 */
+function stopViewportGesture(e){ e.preventDefault(); }
+document.addEventListener("gesturestart", stopViewportGesture, { passive:false });
+document.addEventListener("gesturechange", stopViewportGesture, { passive:false });
 var fileEl = $("file"), coreEl = $("core"), dmodeEl = $("dmode");
 var levelsEl = $("levels"), spaceEl = $("space");
 var cropImgEl = $("cropImg"), objLayerEl = $("objLayer"), prevWrapEl = $("prevWrap");
@@ -2034,10 +2067,10 @@ function ensureObjHandles(el){
   var hDel = document.createElement("i"); hDel.className = "hnd h-del"; hDel.dataset.a = "del";
   el.appendChild(hS); el.appendChild(hR); el.appendChild(hW); el.appendChild(hDel);
 }
-function relayoutOne(i, keepSize){
+function relayoutOne(i, keepSize, fixedScale){
   var objs = curObjs(), o = objs[i], el = objLayerEl.children[i];
   if (!o || !el) return;
-  var s = objScale();
+  var s = fixedScale > 0 ? fixedScale : objScale();
   el.style.left = (o.x * s) + "px";
   el.style.top  = (o.y * s) + "px";
   el.style.transform = "translate(-50%,-50%) rotate(" + (+o.rot||0) + "deg)";
@@ -2077,8 +2110,10 @@ objLayerEl.addEventListener("pointerdown", function(e){
   }
   var r = el.getBoundingClientRect();
   var cx = r.left + r.width/2, cy = r.top + r.height/2;
+  var dragScale = objScale();
   od = { i:i, pid:e.pointerId, act:(e.target.dataset && e.target.dataset.a) || "m",
          sx:e.clientX, sy:e.clientY,
+         scale:dragScale,
          x0:o.x, y0:o.y, size0:o.size, rot0:o.rot,
          wrap0:(+o.wrap || Math.round(EW*0.94)),
          cs:Math.cos((+o.rot||0)*Math.PI/180), sn:Math.sin((+o.rot||0)*Math.PI/180),
@@ -2086,8 +2121,8 @@ objLayerEl.addEventListener("pointerdown", function(e){
          d0:Math.hypot(e.clientX-cx, e.clientY-cy),
          a0:Math.atan2(e.clientY-cy, e.clientX-cx)*180/Math.PI };
   objEditing = true;
-  relayoutOne(i);
-  startLive();             /* 构建无文字底图缓存并首帧实时重绘（画布唯一视觉源） */
+  relayoutOne(i, false, dragScale);
+  startLive();             /* 缓存静态画面，首帧实时重绘（画布唯一视觉源） */
   e.preventDefault();
   document.addEventListener("pointermove", odMove, { passive:false });
   document.addEventListener("pointerup", odUp);
@@ -2096,7 +2131,7 @@ objLayerEl.addEventListener("pointerdown", function(e){
 function odMove(e){
   if (!od || e.pointerId !== od.pid) return;   /* R1.0.22：只响应发起手势的指针 */
   var o = curObjs()[od.i]; if (!o) return;
-  var s = objScale();
+  var s = od.scale;
   if (od.act === "m"){
     o.x = od.x0 + (e.clientX - od.sx)/s;
     o.y = od.y0 + (e.clientY - od.sy)/s;
@@ -2123,7 +2158,7 @@ function odUp(e){
   if (e && od && e.pointerId !== od.pid) return;
   if (od){ saveCfg(); }
   od = null; objEditing = false; layoutObjs();
-  liveBase = null;
+  liveBase = null; liveAbove = null; liveMetric = null;
   if (liveRaf){ cancelAnimationFrame(liveRaf); liveRaf = 0; }
   schedulePreview(false);  /* 松手全量合成：snapIdx 就近吸附恢复锐利边缘 */
   document.removeEventListener("pointermove", odMove);
@@ -2360,6 +2395,7 @@ function deleteSlot(slot){
   });
 }
 
+var prevSlot = -1;   /* 大图预览当前打开的槽，「显示到屏幕」用 */
 function showPreview(slot){
   if (LOCAL_PREVIEW) return;
   /* R1.3.4：读取大图期间弹上传同款遮罩——锁定操作 + 进度反馈 */
@@ -2372,8 +2408,75 @@ function showPreview(slot){
     var w = (u8[4] << 8) | u8[5], h = (u8[6] << 8) | u8[7];
     renderFrameToCanvas($("prevCanvas"), u8.subarray(16), w, h, true);
     hideWorkLoading();
+    prevSlot = slot;
+    $("prevShow").disabled = false;
+    saveState("prevmsg", "", "");
     $("prevOverlay").style.display = "flex";
   }).catch(function(e){ hideWorkLoading(); saveState("caromsg", "err", "预览失败：" + e.message); });
+}
+
+/* 预览窗口「显示到屏幕」：固件只校验并排队，刷屏异步进行，**刷屏成功后才更新 cur**。
+   四色屏整屏刷新远不止 2~4 s（驱动超时留到 45 s），固定延时刷新图库会拿到旧 cur，
+   「当前」高亮不动。改为轮询 /api/info 的 store_cur（比 list 轻，不带缩略图），
+   等到目标张再刷新图库；最多 60 s 截止——有界轮询，不会让设备永不休眠。
+   showSeq：连点另一张时作废上一轮轮询。 */
+var showSeq = 0;
+function waitSlotShown(slot){
+  var seq = ++showSeq, t0 = Date.now();
+  /* 预览窗口可能已换成别的图：提示只写给仍在预览这张的窗口，图库照常刷新 */
+  function say(kind, text){ if (prevSlot === slot) saveState("prevmsg", kind, text); }
+  function next(){
+    if (seq !== showSeq) return;
+    if (Date.now() - t0 > 60000){
+      say("warn", "⚠ 60 秒内未确认屏幕已切换，请看屏幕");
+      refreshGallery();
+      return;
+    }
+    setTimeout(poll, 2000);
+  }
+  function poll(){
+    if (seq !== showSeq) return;
+    fetch(api("/api/info?t=" + Date.now())).then(function(r){ return r.json(); }).then(function(j){
+      if (seq !== showSeq) return;
+      if (+j.store_cur === slot){
+        say("ok", "✓ 屏幕已显示这张");
+        refreshGallery();
+        return;
+      }
+      next();
+    }).catch(next);
+  }
+  setTimeout(poll, 2000);
+}
+function showSlotOnDevice(){
+  if (caroBusy || prevSlot < 0) return;
+  var btn = $("prevShow"), slot = prevSlot;
+  btn.disabled = true;
+  saveState("prevmsg", "busy", "正在发送…");
+  fetch(api("/api/carousel/show?slot=" + slot), { method: "POST" }).then(function(r){
+    return r.text().then(function(t){
+      return { ok: r.status === 200, status: r.status, body: t };
+    });
+  }).then(function(x){
+    if (x.ok){
+      saveState("prevmsg", "busy", "已发送到屏幕，正在刷新…");
+      waitSlotShown(slot);
+    } else if (x.status === 404 && /no such slot/.test(x.body)){
+      saveState("prevmsg", "err", "这张图已不在（可能已被删除），请关闭预览后重试");
+      refreshGallery();
+    } else if (x.status === 404 || x.status === 405){
+      saveState("prevmsg", "err", "当前固件不支持此功能，请先升级固件");
+    } else if (x.status === 503){
+      saveState("prevmsg", "err", "设备正忙，请稍后重试");
+    } else {
+      var extra = x.body ? (" · " + String(x.body).replace(/\s+/g, " ").slice(0, 60)) : "";
+      saveState("prevmsg", "err", "显示失败：HTTP " + x.status + extra);
+    }
+  }).catch(function(){
+    saveState("prevmsg", "err", "网络错误（可能已显示，请看屏幕）");
+  }).then(function(){
+    btn.disabled = false;
+  });
 }
 
 function clearCarousel(){
@@ -2405,6 +2508,7 @@ galGridEl.addEventListener("click", function(ev){
   if (cell) showPreview(parseInt(cell.getAttribute("data-slot"), 10));
 });
 $("carouselClear").addEventListener("click", clearCarousel);
+$("prevShow").addEventListener("click", showSlotOnDevice);
 $("prevClose").addEventListener("click", function(){ $("prevOverlay").style.display = "none"; });
 $("prevOverlay").addEventListener("click", function(ev){
   if (ev.target && ev.target.id === "prevOverlay") this.style.display = "none";
@@ -2752,7 +2856,7 @@ $("saveAp").addEventListener("click", function(){
 });
 /* 编辑空间几何切换后的重排：画布尺寸 / 对象手柄 / 预览全部跟着换。 */
 function onGeomChanged(){
-  liveBase = null;
+  liveBase = null; liveAbove = null; liveMetric = null;
   try { prevEl.width = EW; prevEl.height = EH; } catch(e){}
   try { layoutObjs(); } catch(e){}
   schedulePreview(false);
