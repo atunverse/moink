@@ -68,6 +68,17 @@ footer#appFoot a:active,footer#appFoot a:hover{ color:var(--acc); border-bottom-
                  padding:1px 6px; border-radius:99px; }
 .wifiItem .del{ flex-shrink:0; padding:2px 9px; font-size:12px; background:#f3e7e4;
                 color:var(--err); border-radius:8px; }
+/* 扫描结果（R1.3.5）：点一下即填入 SSID */
+.scanList{ display:flex; flex-direction:column; gap:5px; margin:8px 0; }
+.scanList:empty{ display:none; }
+.scanItem{ display:flex; align-items:center; gap:8px; padding:6px 10px;
+           background:var(--bg); border:1px solid var(--line); border-radius:10px;
+           font-size:13px; cursor:pointer; }
+.scanItem:active{ border-color:var(--ok); }
+.scanItem .n{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.scanItem .bar{ flex-shrink:0; font-size:11px; color:var(--mut); }
+.scanItem .lk{ flex-shrink:0; font-size:11px; color:var(--mut); }
+.scanTip{ font-size:12px; color:var(--mut); margin:4px 0 0; }
 button{ font-family:inherit; cursor:pointer; border:none; border-radius:10px;
         background:var(--acc); color:#fff; font-size:14px; padding:9px 16px; }
 button.mini{ background:#f1ece1; color:var(--ink); padding:7px 12px; font-size:13px; }
@@ -502,6 +513,13 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
     </div>
 
     <div class="wifiList" id="wifiList"></div>
+
+    <div class="row">
+      <label>附近</label>
+      <button class="mini" id="wifiScan">扫描附近 WiFi</button>
+      <span class="savestate" id="scanfmsg"></span>
+    </div>
+    <div class="scanList" id="scanList"></div>
 
     <div class="row">
       <label>名称</label>
@@ -2562,7 +2580,57 @@ function postNet(o, msgId){
     if (el) saveState(msgId, "err", "✗ " + (e.message || "失败"));
   });
 }
+/* 扫描附近 WiFi（R1.3.5）：点一次扫一次，**绝不定时扫** —— 扫描要把射频从热点
+   信道挪到别的信道，连着的手机手会卡 1~2 秒，反复扫等于把热点打断。 */
+function scanAp(){
+  var box = $("scanList"), btn = $("wifiScan");
+  btn.disabled = true;
+  box.innerHTML = "";
+  saveState("scanfmsg", "", "扫描中…（约 2 秒）");
+  fetch(api("/api/scan"))
+    .then(function(r){
+      return r.text().then(function(t){ return {ok: r.ok, status: r.status, text: t}; });
+    })
+    .then(function(x){
+      if (!x.ok) throw new Error(x.text || ("HTTP " + x.status));
+      var d = JSON.parse(x.text), list = d.list || [];
+      if (!list.length){ saveState("scanfmsg", "", "没扫到，靠近路由器再试"); return; }
+      saveState("scanfmsg", "ok", "✓ " + list.length + " 个");
+      list.forEach(function(a){
+        var row = document.createElement("div");
+        row.className = "scanItem";
+        var nm = document.createElement("span");
+        nm.className = "n"; nm.textContent = a.ssid;
+        row.appendChild(nm);
+        var bar = document.createElement("span");
+        bar.className = "bar"; bar.textContent = a.rssi + " dBm";
+        row.appendChild(bar);
+        var lk = document.createElement("span");
+        lk.className = "lk"; lk.textContent = a.lock ? "加密" : "开放";
+        row.appendChild(lk);
+        row.onclick = function(){
+          $("staSsid").value = a.ssid;
+          box.innerHTML = "";
+          if (a.lock){
+            $("staPass").placeholder = "输入该 WiFi 的密码";
+            $("staPass").focus();
+          }else{
+            $("staPass").value = "";
+            $("staPass").placeholder = "开放网络，密码留空";
+            $("wifiAdd").focus();
+          }
+          saveState("scanfmsg", "ok", "已填入名称");
+        };
+        box.appendChild(row);
+      });
+    })
+    .catch(function(e){
+      saveState("scanfmsg", "err", "✗ " + (e.message || "扫描失败"));
+    })
+    .then(function(){ btn.disabled = false; });
+}
 function initNetUI(){
+  $("wifiScan").onclick = scanAp;
   $("wifiAdd").onclick = function(){
     var ssid = $("staSsid").value.trim();
     if (!ssid){ saveState("wifimsg", "err", "✗ 请填 WiFi 名称"); return; }

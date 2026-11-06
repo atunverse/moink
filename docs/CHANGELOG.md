@@ -55,6 +55,11 @@
   `192.168.4.1`，保留原有门户劫持。
 - 新接口 `GET/POST /api/net`；`/api/info` 增加 `net_on` / `napt` / `sta_connected` /
   `sta_ssid` / `sta_ip` / `sta_rssi`（契约见 CONTRACT §6.3）。
+- **扫描附近 WiFi 配网**（`GET /api/scan`，契约 §6.3.4）：主动扫全信道 80~120 ms/信道，
+  同 SSID 取最强、按 RSSI 降序、排除本机热点，最多回 16 条 `{ssid,rssi,lock}`。
+  页面「联网」卡片加「扫描附近 WiFi」按钮，点结果直接把名称填进输入框，
+  只需再输密码 —— 不用手打 SSID。**只手动触发，绝不轮询**（扫描要把射频挪离热点信道，
+  期间客户端会卡 1~2 s）。
 - 控制页新增「联网（上游 WiFi）」卡片：联网 / 转发开关、已保存列表（可逐个删除）、
   添加网络、当前连接状态与信号强度。
 
@@ -67,8 +72,8 @@
 
 ### 涉及文件
 - `src/settings.h` / `settings.c`：`sett_wifi_t`、5 个新键、网络列表增删改查
-- `src/netif_ap.h` / `netif_ap.c`：APSTA、连接任务、NAPT、DNS 跟随
-- `src/main.c`：`/api/net` 路由、`/api/info` 扩展、启动时拉起 STA 任务
+- `src/netif_ap.h` / `netif_ap.c`：APSTA、连接任务、NAPT、DNS 跟随、扫描（`netif_sta_scan`）
+- `src/main.c`：`/api/net` + `/api/scan` 路由、`/api/info` 扩展、启动时拉起 STA 任务
 - `sdkconfig.defaults`：`LWIP_IP_FORWARD` / `LWIP_IPV4_NAPT`
 - `page/index.html`、`src/index_html.h`、`src/version.h`、`docs/CONTRACT.md`（新增 §6.3）
 

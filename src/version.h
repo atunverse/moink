@@ -239,6 +239,9 @@
  *   - 新接口 GET/POST /api/net：读取联网状态与已保存网络列表（不回传密码）、
  *     增删网络、切换联网/转发开关。/api/info 增加 net_on / napt / sta_connected /
  *     sta_ssid / sta_ip / sta_rssi。
+ *   - 新接口 GET /api/scan：扫描附近 WiFi 配网（同 SSID 取最强、按 RSSI 降序、
+ *     排除本机热点、最多 16 条）。阻塞 1~2 s，仅手动触发；扫描期间射频离开热点
+ *     信道，客户端会卡顿 1~2 s，因此禁止页面轮询。
  *   - 新 NVS 键：wn / wlist / wifi_last / net_on / napt_on。老设备无这些键时
  *     net_on=0 ⇒ **升级后行为与旧固件完全一致**（不联网、不转发）。
  *   - 内存代价：settings 结构约 +790 B 静态 RAM；STA 连接任务 3.5 KB 栈；

@@ -18,6 +18,7 @@
  *   GET  /api/info        状态（版本 / 接口 / 面板 / 堆 / 电量 / 客户端数 / 联网）
  *   GET/POST /api/settings 读写设置
  *   GET/POST /api/net     上游 WiFi 列表与热点转发状态（R1.3.5）
+ *   GET  /api/scan        扫描附近 WiFi（配网用，阻塞 1~2 s）
  *   POST /api/frame       传图
  *   POST /api/upload      ★统一升级入口（自动识别 .bin 固件 / .html 控制页）
  *   POST /api/web/clear   清除已上传控制页，回退内嵌页
@@ -477,6 +478,48 @@ static esp_err_t net_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "OK");
 }
 
+/* ---------------- /api/scan（R1.3.5 配网：扫描附近 AP） ----------------
+ *
+ * GET 返回 {"n":N,"list":[{"ssid":"..","rssi":-45,"lock":1}, ...]}
+ * 一次性阻塞 1~2 s，前端点「扫描」才调，别做成轮询。
+ */
+static esp_err_t scan_get_handler(httpd_req_t *req)
+{
+    power_activity();
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&mode) == ESP_OK &&
+        mode != WIFI_MODE_STA && mode != WIFI_MODE_APSTA) {
+        /* 纯 AP 模式下扫描会被驱动拒绝，直接给明确错误，别让页面干等。 */
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "wifi not in sta mode");
+    }
+
+    /* 16 条结果足够（页面也就显示一屏）。结构体放栈上 640 B，JSON 放 static。 */
+    netif_scan_t found[16];
+    int n = netif_sta_scan(found, 16);
+    if (n < 0) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "scan failed");
+    }
+
+    static char buf[1800];
+    int off = snprintf(buf, sizeof(buf), "{\"n\":%d,\"list\":[", n);
+
+    for (int i = 0; i < n; i++) {
+        if (off > (int)sizeof(buf) - 96) break;      /* 余量不足就收尾 */
+        char esc[SETT_SSID_MAX * 2 + 4];
+        json_esc(found[i].ssid, esc, sizeof(esc));
+        off += snprintf(buf + off, sizeof(buf) - (size_t)off,
+                        "%s{\"ssid\":\"%s\",\"rssi\":%d,\"lock\":%u}",
+                        i ? "," : "", esc, (int)found[i].rssi,
+                        (unsigned)found[i].lock);
+    }
+    if (off < (int)sizeof(buf) - 4)
+        off += snprintf(buf + off, sizeof(buf) - (size_t)off, "]}");
+    if (off > (int)sizeof(buf) - 1) off = (int)sizeof(buf) - 1;
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, (size_t)off);
+}
+
 /* ---------------- /api/clear / /api/factory ---------------- */
 
 static esp_err_t clear_handler(httpd_req_t *req)
@@ -801,6 +844,7 @@ static httpd_handle_t start_server(void)
         { .uri = "/api/settings",   .method = HTTP_POST,   .handler = settings_post_handler,.user_ctx = NULL },
         { .uri = "/api/net",        .method = HTTP_GET,    .handler = net_get_handler,      .user_ctx = NULL },
         { .uri = "/api/net",        .method = HTTP_POST,   .handler = net_post_handler,     .user_ctx = NULL },
+        { .uri = "/api/scan",       .method = HTTP_GET,    .handler = scan_get_handler,     .user_ctx = NULL },
         { .uri = "/api/frame",      .method = HTTP_POST,   .handler = frame_upload_handler, .user_ctx = NULL },
         { .uri = "/api/carousel/clear", .method = HTTP_POST, .handler = clear_carousel_handler, .user_ctx = NULL },
         { .uri = "/api/carousel/list",  .method = HTTP_GET,  .handler = carousel_list_handler,  .user_ctx = NULL },

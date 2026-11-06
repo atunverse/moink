@@ -14,6 +14,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>     /* calloc / free / qsort（扫描结果临时缓冲） */
 
 static const char *TAG = "netif_ap";
 
@@ -447,4 +448,90 @@ void netif_napt_refresh(void)
 {
     napt_apply(s_sta_up);
     dns_follow_upstream(s_sta_up);
+}
+
+/* ---------------- 扫描附近 AP（配网用） ----------------
+ *
+ * 只在用户点「扫描」时调用一次。为什么不做定时扫描：扫描要逐信道跳，
+ * 射频一离开 AP 信道，热点内客户端就收不到包（1~2 s），已连的 STA 甚至可能瞬断。
+ *
+ * 内存：wifi_ap_record_t 约 112 B/条，最多取 32 条 ⇒ 3.6 KB 临时堆，
+ * 扫完立刻释放；不占静态 RAM，也不放在 httpd 的 4 KB 栈上。
+ */
+#define SCAN_MAX_REC 32
+
+static int cmp_rssi_desc(const void *a, const void *b)
+{
+    const netif_scan_t *x = (const netif_scan_t *)a;
+    const netif_scan_t *y = (const netif_scan_t *)b;
+    return (int)y->rssi - (int)x->rssi;      /* 强信号在前 */
+}
+
+int netif_sta_scan(netif_scan_t *out, int max)
+{
+    if (!out || max <= 0) return -1;
+
+    wifi_scan_config_t cfg = { 0 };
+    cfg.ssid        = NULL;
+    cfg.bssid       = NULL;
+    cfg.channel     = 0;                     /* 0 = 全信道 */
+    cfg.show_hidden = false;                 /* 隐藏 SSID 无法选中，不列 */
+    cfg.scan_type   = WIFI_SCAN_TYPE_ACTIVE;
+    cfg.scan_time.active.min = 80;           /* ms/信道：13 信道约 1.0~1.6 s */
+    cfg.scan_time.active.max = 120;
+
+    esp_err_t e = esp_wifi_scan_start(&cfg, true);   /* true = 阻塞到扫完 */
+    if (e != ESP_OK) {
+        ESP_LOGW(TAG, "scan start failed: %s", esp_err_to_name(e));
+        return -2;
+    }
+
+    uint16_t n = 0;
+    if (esp_wifi_scan_get_ap_num(&n) != ESP_OK || n == 0) {
+        esp_wifi_clear_ap_list();
+        return 0;
+    }
+    if (n > SCAN_MAX_REC) n = SCAN_MAX_REC;
+
+    wifi_ap_record_t *rec = calloc(n, sizeof(wifi_ap_record_t));
+    if (!rec) {
+        esp_wifi_clear_ap_list();
+        return -3;
+    }
+
+    uint16_t got = n;
+    e = esp_wifi_scan_get_ap_records(&got, rec);
+    esp_wifi_clear_ap_list();                /* 释放驱动内部列表 */
+    if (e != ESP_OK) {
+        free(rec);
+        return -3;
+    }
+
+    int cnt = 0;
+    for (int i = 0; i < (int)got && cnt < max; i++) {
+        const char *ssid = (const char *)rec[i].ssid;
+        if (!ssid[0]) continue;                       /* 空 SSID（隐藏网络） */
+        if (strcmp(ssid, s_ssid) == 0) continue;      /* 跳过自己的热点 */
+
+        /* 同一 SSID 可能有多个 AP（mesh / 双频同名），只留最强的那条。 */
+        int dup = -1;
+        for (int k = 0; k < cnt; k++) {
+            if (strcmp(out[k].ssid, ssid) == 0) { dup = k; break; }
+        }
+        if (dup >= 0) {
+            if (rec[i].rssi > out[dup].rssi) out[dup].rssi = rec[i].rssi;
+            continue;
+        }
+
+        strlcpy(out[cnt].ssid, ssid, sizeof(out[cnt].ssid));
+        out[cnt].rssi = rec[i].rssi;
+        out[cnt].lock = (rec[i].authmode != WIFI_AUTH_OPEN) ? 1 : 0;
+        cnt++;
+    }
+
+    free(rec);
+    qsort(out, (size_t)cnt, sizeof(netif_scan_t), cmp_rssi_desc);
+
+    ESP_LOGI(TAG, "scan: %u ap(s), %d listed", (unsigned)got, cnt);
+    return cnt;
 }

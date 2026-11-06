@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include "esp_err.h"
+#include "settings.h"   /* SETT_SSID_MAX（扫描结果的 SSID 缓冲） */
 
 /*
  * 网络层：SoftAP（手机连设备传图）+ 可选 STA（设备连上游 WiFi）。
@@ -65,5 +66,22 @@ bool netif_napt_active(void);
 
 /* 设置里的 napt_on 改变后调用：立即按新开关重估转发与上游 DNS，不打断 STA 连接。 */
 void netif_napt_refresh(void);
+
+/* ---------------- 扫描附近 AP（R1.3.5 配网用） ---------------- */
+
+/* 一条扫描结果。SSID 已按「同 SSID 取最强信号」去重。 */
+typedef struct {
+    char    ssid[SETT_SSID_MAX];   /* 33 字节 */
+    int8_t  rssi;
+    uint8_t lock;                  /* 1 = 加密网络，需要密码 */
+} netif_scan_t;
+
+/* 主动扫描 2.4G 全信道，结果按 RSSI 降序写入 out（最多 max 条）。
+ * 返回条数；0 = 没扫到；<0 = 失败（-1 参数错，-2 扫描启动失败，-3 内存不足）。
+ *
+ * ★ 阻塞约 1~2 s：httpd 工作线程会等在这里，页面需显示加载态。
+ * ★ 扫描期间射频要逐信道跳，热点内客户端可能卡顿 1~2 s（已连的 STA 也可能瞬断，
+ *   由 sta_task 自动重连）。因此只在用户手动点「扫描」时调用，不做定时扫描。 */
+int netif_sta_scan(netif_scan_t *out, int max);
 
 #endif /* MOINK_NETIF_AP_H */

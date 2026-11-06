@@ -230,6 +230,7 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
 | POST | `/api/frame` | 传图（§1 帧格式）。query：`save=1` 存轮播槽并显示、`save=1&noshow=1` 只存不显示、`tlen=N` 随帧携带缩略（§1.1）。无 `save` = 只显示不存 |
 | GET | **`/api/net`** | 联网状态 JSON（R1.3.5）：`{on,napt_on,napt,connected,ssid,ip,rssi,trying,count,list[{ssid,has_pass}]}`。**不回传密码**；`list` 顺序即尝试优先级 |
 | POST | **`/api/net`** | 上游 WiFi 管理（R1.3.5）：`action=add&ssid=..&pass=..`（同名更新密码并置顶）/ `action=del&idx=N` / `action=clear`；不带 `action` 时按 `on=0|1`、`napt=0|1` 改开关。详见 §6.3 |
+| GET | **`/api/scan`** | 扫描附近 WiFi（R1.3.5，配网用）：`{n, list[{ssid,rssi,lock}]}`，按 RSSI 降序、同 SSID 去重、已排除本机热点。**阻塞 1~2 s**，只能手动触发。详见 §6.3.4 |
 | POST | `/api/carousel/clear` | 清空轮播：**只清 NVS 元数据、不擦 flash**（`count=0` / `cur=0` / `alive=0`） |
 | GET | `/api/carousel/list` | 图库列表 JSON：`{slots,count,cur,items[{slot,fmt,w,h,len,data}]}`，`data` = 缩略图 base64（`fmt=2` 为彩色 JPEG，`fmt=1` 为 2bit 帧） |
 | GET | `/api/carousel/full?slot=N` | 整帧二进制（16B 头 + 2bpp 载荷），供网页大图预览；流式读 flash 分块发送 |
@@ -329,6 +330,19 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
   固件在已连接时先 `esp_wifi_get_channel()` 再写 AP 配置，避免把 STA 踢下线；
   原固定信道 6 只在未连 STA 时生效。
 - 代价：AP+STA 分时共用射频，转发吞吐约为单 STA 的一半；lwIP 转发路径多占约 8~16 KB。
+
+#### 6.3.4 扫描附近 WiFi（`/api/scan`）
+
+- 目的：配网时不用手打 SSID —— 扫出来点一下就把名称填进输入框，只需再输密码。
+- 参数：`WIFI_SCAN_TYPE_ACTIVE`，全信道（`channel=0`），80~120 ms/信道，隐藏 SSID 不列；
+  去重规则「同 SSID 取最强 RSSI」，结果按 RSSI 降序，最多 16 条回给页面。
+- 失败码：`wifi_mode` 不是 STA/APSTA → 400 `wifi not in sta mode`；
+  扫不起来（驱动忙/内存不足）→ 500 `scan failed`。
+- ★ **必须手动触发，禁止页面轮询**：扫描要从热点信道跳到其他信道逐一探测，
+  期间热点内客户端收不到包（1~2 s），已连的上游也可能瞬断（由 `sta_task` 自动重连）。
+  做成定时扫描 = 反复打断热点。
+- 内存：驱动返回的 `wifi_ap_record_t` 约 112 B/条，最多取 32 条 ⇒ 约 3.6 KB 临时堆，
+  扫完立刻 `free()` + `esp_wifi_clear_ap_list()`；不占静态 RAM，也不放 httpd 的 4 KB 栈。
 
 ## 7. 设置与 NVS
 
