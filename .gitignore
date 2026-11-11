@@ -65,3 +65,13 @@ docs/tmp/
 logs/
 .aoci/
 aoci*.txt
+
+# ---- 根目录单版本产物与发布快照（正式发布件只走 GitHub Releases）----
+/page-R1*.html
+
+# ---- AOCI 认知层（机器生成 / 机器维护，勿手改勿入库）----
+/AGENTS.md
+sdkconfig.moink_dbg
+
+# ---- 本地清理暂存区（确认无误后整目录删除）----
+/_trash_*/

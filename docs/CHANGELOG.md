@@ -41,6 +41,20 @@
 ---
 
 
+## [维护] 2026-11-11 —— 仓库目录清理（无版本变更）
+
+> 仅整理本地工作区，**不改任何固件 / 页面代码，不推进版本号**。
+
+- 移入 `_trash_20261111/`（确认无误后可整目录删除，回滚按 `MANIFEST.txt` 相对路径移回）：
+  88 个历史 / 实验固件 bin、12 个历史刷机包 zip、42 份编译日志、14 份根目录页面快照、
+  `docs/tmp/` 实验过程图（21 MB）、`legacy_ref/`（旧 M 系列，历史提交中仍可查）、
+  `page-calib/`、`unpacked/`、`sdkconfig.moink_dbg`（env 已移除）、
+  `tools/` 下 236 个一次性脚本、R1.2 及更早的 backups 快照。
+- 保留：R1.3.6 全套产物、`flash_kit/`、`samples/`、`logs/`（色阶实测原始日志）、
+  `docs/ref/`（屏厂数据手册）、`releases/baseline-fwR1.0.6_pageR1.0.10/`（文档指定的恢复点）、
+  最近一次发版脚本 `tools/_release_r136.py` / `_kitpack_r136.py`。
+- `.gitignore` 增补：`/page-R1*.html`、`/AGENTS.md`（AOCI 机器生成）、`sdkconfig.moink_dbg`、`/_trash_*/`。
+
 ## [R1.3.6] 2026-11-11 —— 供电来源判定：USB 5V 防倒灌电池（FB-026）
 
 > 状态：**已编译、已发版**（2026-11-11）。真机验证清单见 `flash_kit/使用说明.txt` 的
