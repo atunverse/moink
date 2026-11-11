@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="moink-page-version" content="R1.3.5">
+<meta name="moink-page-version" content="R1.3.6">
 <title>墨印 · MoInk</title>
 <style>
 /* ===== Cropper.js v1.6.2 | MIT | https://github.com/fengyuanchen/cropperjs ===== */
@@ -448,6 +448,16 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
         <option value="0">休眠</option>
         <option value="1">关机（断电）</option>
       </select>
+    </div>
+    <div class="row" id="lineVerRow" style="display:none">
+      <label>排线版本</label>
+      <span><input type="checkbox" id="lineNew"> 新排线（CH213K 反向阻断，ADC 接 VSYS）</span>
+    </div>
+    <div class="hint" id="lineVerHint" style="display:none">
+      <b>只有确认手上是新版排线才勾选。</b>不勾选时，电池供电下<b>不允许休眠</b>，
+      超时一律按「关机」处理 —— 老排线在休眠期间插 USB，5 V 会倒灌进电池
+      （3~4 A，无 CC/CV），而芯片睡着时没有任何发现手段。<br>
+      勾选后<b>不再做 USB 插入检测</b>：插着线时电池通路保持接通，拔线不掉电。
     </div>
     <div id="sleepOpts">
       <div class="row">
@@ -2600,6 +2610,7 @@ function loadSettings(){
     $("actionSel").value = String(s.timeout_action == null ? 0 : s.timeout_action);
     $("wakeSel").value = String(s.wake_s);
     $("wakeShow").checked = (s.wake_show == null) ? true : !!s.wake_show;  /* 默认开启 */
+    $("lineNew").checked = !!s.line_v;   /* R1.3.6：默认老排线（未勾选） */
     syncPowerUI();
     $("apSsid").value = s.ssid || "";
     $("apPass").placeholder = s.pass_set ? "已设置（留空 = 保持当前密码）" : "留空 = 开放热点";
@@ -2753,7 +2764,7 @@ function initNetUI(){
    热点改名会立刻踢掉客户端（应答可能收不到），所以回读带重试。 */
 var SETT_LABEL = { panel:"屏幕", hflip:"左右镜像", gpio_preset:"GPIO 接法",
                    wifi_pwr:"WiFi 功率", sleep_s:"超时", timeout_action:"超时动作",
-                   wake_s:"自动唤醒", wake_show:"唤醒后切图",
+                   wake_s:"自动唤醒", wake_show:"唤醒后切图", line_v:"排线版本",
                    ssid:"热点名", pass:"热点密码" };
 function saveState(id, kind, text){
   var el = id ? $(id) : null; if (!el) return;
@@ -2840,7 +2851,8 @@ $("saveSleep").addEventListener("click", function(){
     sleep_s: $("sleepSel").value,
     timeout_action: $("actionSel").value,
     wake_s: $("wakeSel").value,
-    wake_show: $("wakeShow").checked ? 1 : 0
+    wake_show: $("wakeShow").checked ? 1 : 0,
+    line_v: $("lineNew").checked ? 1 : 0
   }, function(){ loadSettings(); }, "sleepmsg");
 });
 $("saveAp").addEventListener("click", function(){
@@ -2912,6 +2924,13 @@ function syncGpioSels(changedIdx){
   });
 }
 function toggleGpioCustom(){ $("gpioCustom").style.display = ($("gpioPreset").value === "3") ? "" : "none"; }
+/* R1.3.6：「排线版本」只在接法选「排线」时才出现 —— 其它档位没有这回事。 */
+function syncLineVer(preset){
+  var v = (preset == null) ? $("gpioPreset").value : String(preset);
+  var disp = (v === "1") ? "" : "none";
+  $("lineVerRow").style.display = disp;
+  $("lineVerHint").style.display = disp;
+}
 function loadGpio(s){
   var preset = (s && s.gpio_preset != null) ? +s.gpio_preset : 0;
   $("gpioPreset").value = String(preset);
@@ -2923,6 +2942,7 @@ function loadGpio(s){
   });
   syncGpioSels(null);
   toggleGpioCustom();
+  syncLineVer(preset);
 }
 function gpioFields(){
   var preset = $("gpioPreset").value;
@@ -2945,6 +2965,7 @@ gpioSels().forEach(function(sel, i){
 $("gpioPreset").addEventListener("change", function(){
   if ($("gpioPreset").value === "3") syncGpioSels(null);
   toggleGpioCustom();
+  syncLineVer();
 });
 $("saveGpio").addEventListener("click", function(){
   postSettings(gpioFields(), function(){}, "gpiomsg", "✓ 已保存，重启后生效");

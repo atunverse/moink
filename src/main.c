@@ -250,7 +250,7 @@ static esp_err_t info_handler(httpd_req_t *req)
         "\"store_count\":%d,\"store_cur\":%d,"
         "\"wake_reason\":\"%s\",\"wake_bits\":%lu,"
         "\"net_on\":%u,\"napt\":%s,\"sta_connected\":%s,"
-        "\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\",\"sta_rssi\":%d}",
+        "\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\",\"sta_rssi\":%d,\"usb\":%s}",
         ota_web_page_version(), MOINK_VERSION, MOINK_API_VERSION,
         epd_panel_name((epd_panel_t)s->panel), (unsigned)s->gpio_preset,
         (unsigned long)esp_get_free_heap_size(), power_battery_mv(),
@@ -261,7 +261,8 @@ static esp_err_t info_handler(httpd_req_t *req)
         wake_src_name(s_wake_src), (unsigned long)s_wake_bits,
         s->net_on, netif_napt_active() ? "true" : "false",
         netif_sta_connected() ? "true" : "false",
-        netif_sta_ssid(), netif_sta_ip(), netif_sta_rssi());
+        netif_sta_ssid(), netif_sta_ip(), netif_sta_rssi(),
+        power_usb_powered() ? "true" : "false");
     if (n < 0 || n >= (int)sizeof(buf)) buf[sizeof(buf) - 1] = '\0';
 
     httpd_resp_set_type(req, "application/json");
@@ -279,12 +280,13 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
     snprintf(buf, sizeof(buf),
         "{\"panel\":%u,\"hflip\":%u,\"wifi_pwr\":%u,\"gpio_preset\":%u,"
         "\"pins\":[%u,%u,%u,%u,%u,%u,%u,%u],"
-        "\"sleep_s\":%lu,\"timeout_action\":%u,\"wake_s\":%lu,\"wake_show\":%u,"
+        "\"sleep_s\":%lu,\"timeout_action\":%u,\"line_v\":%u,"
+        "\"wake_s\":%lu,\"wake_show\":%u,"
         "\"ssid\":\"%s\",\"pass_set\":%s}",
         s->panel, s->hflip, s->wifi_pwr, s->gpio_preset,
         s->pins.v[0], s->pins.v[1], s->pins.v[2], s->pins.v[3],
         s->pins.v[4], s->pins.v[5], s->pins.v[6], s->pins.v[7],
-        (unsigned long)s->sleep_s, s->timeout_action,
+        (unsigned long)s->sleep_s, s->timeout_action, s->line_ver,
         (unsigned long)s->wake_s, s->wake_show,
         s->ap_ssid, s->ap_pass[0] ? "true" : "false");
 
@@ -363,6 +365,9 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     }
     if (kv_get(body, "wake_show", v, sizeof(v))) {
         settings_set_wake_show((uint8_t)atoi(v));
+    }
+    if (kv_get(body, "line_v", v, sizeof(v))) {
+        settings_set_line_ver((uint8_t)atoi(v));
     }
 
     /* 热点凭据（FB-014①）：单字段可改 —— pass 键缺省 = 保持当前密码，
@@ -961,9 +966,21 @@ static void idle_monitor_task(void *arg)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         if (!power_should_sleep()) continue;
+
+        const moink_settings_t *st = settings_get();
+        /* R1.3.6：老排线在电池供电下禁止休眠。
+           深睡期间插 USB，芯片没有能力发现（C3 的 ULP 访问不到 SAR ADC），
+           而 GPIO2 被 hold 在高电平、MOS 一直导通 ⇒ 5 V 会持续倒灌电池。
+           既然不能安全休眠，就按「关机」处理：释放自锁断电。
+           USB 供电（未自锁）时不拦 —— 此时电池已隔离，睡下去也安全。
+           新排线（CH213K 反向阻断）不受此限。 */
+        bool no_sleep = (st->gpio_preset == GPIO_PRESET_LINE &&
+                         st->line_ver == LINE_VER_OLD &&
+                         power_self_locked());
+
         /* 超时动作（R1.3.3）：默认休眠；选「关机」则释放自锁断电。
            两条路径都不返回。 */
-        if (settings_get()->timeout_action == SETT_ACTION_OFF) {
+        if (st->timeout_action == SETT_ACTION_OFF || no_sleep) {
             power_self_lock_off();
         }
         power_enter_deep_sleep();
@@ -1136,17 +1153,11 @@ static void button_task(void *arg)
 
 void app_main(void)
 {
-    /* ★ MOS 一键开机自锁（R1.2.2）：上电第一件事就拉高，按钮松手后靠它维持
-       供电。必须早于一切耗时初始化，也不依赖任何设置（引脚固定 GPIO2）。 */
-    gpio_config_t self_lock = {
-        .pin_bit_mask = 1ULL << PIN_SELF_LOCK,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&self_lock);
-    gpio_set_level((gpio_num_t)PIN_SELF_LOCK, 1);
+    /* ★ 自锁脚先定态、不导通（R1.3.6）：栅极有下拉，复位后 MOS 本就是断的，
+       这里只给一个确定的低电平。要不要导通交给下面的电源判据 —— 插着 USB 时
+       若照旧无条件拉高，VSYS 的 5 V 会经 MOS 直接倒灌进电池（3~4 A，无 CC/CV）。
+       详见 docs/方案-USB供电防倒灌-自锁门控.md 与 CONTRACT §5.4。 */
+    power_lock_gpio_init();
 
     /* ★ 帧缓冲必须在这里抢（R1.3.5 修启动 OOM）：NVS / settings / 任务栈 /
        WiFi 初始化会把 DRAM 大块切碎，实测到 frame_init() 时最大连续块只剩
@@ -1171,6 +1182,13 @@ void app_main(void)
 
     settings_init();
 
+    /* ★ 电源判据（R1.3.6）：必须在 settings_init() 之后 —— 判据要读运行时解析
+       出来的唤醒脚。冷启动只认按键（按键松 = 有外部电源 = 不自锁），运行中靠
+       200 ms 轮询。 */
+    bool self_locked = power_lock_boot();
+    ESP_LOGE(TAG, "[pwr] self_lock=%d usb=%d reason=%d",
+             (int)self_locked, (int)power_usb_powered(), (int)esp_reset_reason());
+
     /* 唤醒来源：GPIO = 按键，TIMER = 定时自动唤醒，位图 0 = 上电/复位。
        放在 settings_init() 之后，日志才能打出运行时解析出的唤醒脚。 */
     s_wake_bits = power_wakeup_causes();
@@ -1194,6 +1212,7 @@ void app_main(void)
     }
 
     power_init();       /* 配好按键脚与电池 ADC，按键任务依赖它 */
+    power_usb_monitor_start();   /* R1.3.6：自锁态下每 200 ms 查 USB（新排线内部跳过） */
 
     /* 按键识别尽早启动（上电后约 0.3 s）：双击的第二击才来得及被采样到。
        本任务只投事件、不刷屏，display_task 就绪前投来的事件先在队列里排着。 */

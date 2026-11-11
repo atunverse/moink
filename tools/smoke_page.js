@@ -199,9 +199,29 @@ ok("R1.2.2 固件侧：引脚运行时化 + 三档预设 + 自锁脚 + 无 EPD_P
    && settingsH.indexOf("GPIO_PRESET_BOARD    2") >= 0
    && settingsH.indexOf("GPIO_PRESET_CUSTOM   3") >= 0
    && epdDrvC.indexOf("settings_pins()") >= 0 && epdDrvC.indexOf("EPD_PIN_") < 0);
-ok("R1.2.2 固件侧：自锁 GPIO2 上电拉高 + /api/reboot + 无 a1_mode",
-   mainC.indexOf("gpio_set_level((gpio_num_t)PIN_SELF_LOCK, 1);") >= 0
+ok("R1.3.6 固件侧：自锁改由供电判据决定 + /api/reboot + 无 a1_mode",
+   mainC.indexOf("power_lock_gpio_init();") >= 0
+   && mainC.indexOf("power_lock_boot();") >= 0
+   && mainC.indexOf("gpio_set_level((gpio_num_t)PIN_SELF_LOCK, 1);") < 0
    && mainC.indexOf('"/api/reboot"') >= 0 && mainC.indexOf("epd_set_a1_mode") < 0);
+ok("R1.3.6 固件侧：冷启动只认按键（判据内不读电压）+ 轮询 4.5 V/3 次去抖",
+   mainC.indexOf("power_usb_monitor_start();") >= 0
+   && powerC.slice(powerC.indexOf("bool power_lock_boot"),
+                   powerC.indexOf("void power_lock_release")).indexOf("power_vsys_mv") < 0
+   && powerC.indexOf("#define USB_MV_THRESHOLD  4500") >= 0
+   && powerC.indexOf("#define USB_HITS_NEED     3") >= 0
+   && powerC.indexOf("gpio_set_level((gpio_num_t)PIN_SELF_LOCK, s_lock_want ? 1 : 0);") >= 0);
+ok("R1.3.6 固件侧：新排线跳过轮询 + 老排线电池态禁休眠",
+   powerC.indexOf("st->gpio_preset == GPIO_PRESET_LINE && st->line_ver == LINE_VER_NEW") >= 0
+   && mainC.indexOf("st->line_ver == LINE_VER_OLD") >= 0
+   && mainC.indexOf("power_self_locked()") >= 0
+   && settingsC.indexOf('read_u8("line_v"') >= 0
+   && settingsH.indexOf("#define LINE_VER_NEW      1") >= 0);
+ok("R1.3.6 页面：排线版本勾选 + line_v 提交 + 仅排线档显示",
+   page.indexOf('id="lineNew"') >= 0
+   && page.indexOf("syncLineVer") >= 0
+   && page.indexOf('line_v: $("lineNew").checked ? 1 : 0') >= 0
+   && page.indexOf('(v === "1") ? "" : "none"') >= 0);
 // R1.2.2：升级不再全量重置设置，只清理本版已废弃的键（a1_mode / a11_var）。
 const rfu = settingsC.slice(settingsC.indexOf("void settings_reset_for_upgrade"));
 ok("R1.2.2 固件侧：升级只清废弃键、不重置用户设置",

@@ -2,7 +2,7 @@
 
 > 本文档是**固件与页面之间的唯一权威接口定义**，以及**屏驱动的物理契约**。
 > 改动任何一条必须同步更新 `check_frame.py` / `smoke_page.js` 并全量回归。
-> 版本：version = R1.3.5（固件与控制页共用这一个号），api = 2。
+> 版本：version = R1.3.6（固件与控制页共用这一个号），api = 2。
 
 ---
 
@@ -139,7 +139,7 @@ body = 帧头(16B) + 2bpp 帧载荷(len) + 缩略头(16B) + 缩略载荷(tlen)
 | BUSY | 10 | 3 | 10 | 白名单 `0..10` |
 | 唤醒键（KEY） | 5（→ GND，内部上拉、低电平唤醒；单击只唤醒、双击切图、长按 20s 恢复出厂） | 1 | 1 | **仅 GPIO0..5**（RTC 深睡唤醒域） |
 | 电池 ADC | 0 | 0 | 0 | **仅 GPIO0..4**（ADC1_CH0..CH4；GPIO5 为 ADC2，与 WiFi 冲突且不稳定） |
-| **自锁脚（LOCK）** | **2**（固定） | 2 | 2 | 不对外开放；MOS 一键开机，上电拉高、深睡 `gpio_hold` 保持 |
+| **自锁脚（LOCK）** | **2**（固定） | 2 | 2 | 不对外开放；MOS 一键开机。**R1.3.6 起不再上电即拉高**，由供电来源判据决定（§5.4）；深睡按当前状态 `gpio_hold` |
 
 - **白名单**：`GPIO0..10`（11..17 为片内 SPI flash、18/19 为 USB-JTAG，本项目不使用）；
   自定义档**不得重复**、且必须避开自锁脚 `2`。固件 `pin_cfg_valid()` 校验，非法直接 `400`。
@@ -210,23 +210,87 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
 | `1` off | 关机 | 释放自锁脚断电（见下），**不区分 GPIO 接法** |
 
 - `sleep_s = 0`（不超时）时两个动作都不执行，设备常亮。
-- **关机实现**：`power_self_lock_off()` 把 GPIO2 拉低，切断 MOS 自锁供电。有自锁电路时
+- **关机实现**：`power_self_lock_off()` 先 `gpio_hold_dis()` 再拉低 GPIO2，切断 MOS 自锁供电
+  （深睡唤醒后 hold 仍生效，不解除则 `set_level` 静默无效）。有自锁电路时
   约 100 ms 掉电、函数不返回；**没有自锁电路（USB 供电 / 未装 MOS）时拉低无效**，
   1 s 后退回深睡。⇒ 关机能力依赖硬件，控制页对此有明确提示。
 - **定时唤醒切图**：`wake_show = 1`（默认）时，`wake_reason = timer` 的启动会在
   `display_task` 就绪后投递 `UI_EV_CAROUSEL_NEXT`，自动切到下一张；图库为空则无动作。
   该开关只影响定时唤醒；按键唤醒仍走 §5.1 的双击语义。
-- 新 NVS 键：`to_act`（超时动作）、`wake_show`（唤醒切图）。老设备无键时取默认值
-  （休眠 / 开），升级后行为不变。
+- 新 NVS 键：`to_act`（超时动作）、`wake_show`（唤醒切图）、**`line_v`**（R1.3.6 排线版本，
+  见 §5.4；无键 = 老排线）。老设备无键时取默认值，升级后行为不变。
+
+### 5.4 供电来源判定与自锁门控（R1.3.6 起）
+
+**背景**：排线板上电池经背靠背 AO3401 接 VSYS，栅极由 GPIO2 驱动（高 = 导通）。
+插 USB 时若自锁导通，5 V 会直接压在电芯上（3~4 A，无 CC/CV）。
+详见 `docs/方案-USB供电防倒灌-自锁门控.md`。
+
+**冷启动：只认按键，不读电压**
+
+| 情形 | 判定 | 动作 |
+|---|---|---|
+| 按键**按下** | 电池开机 | 拉高 GPIO2 自锁，启动轮询 |
+| 按键**已松** | 必有另一路电源（USB） | **不自锁，也不轮询**（电池已隔离） |
+
+- **为什么只认按键**：电池能到达 VSYS 的唯一路径是「按键按住」，而 USB 上电没人按键。
+  这是**物理自证**，不是测量 —— 只可能漏判成「开机失败」（按太短 / 接法选错），
+  不会误判成「意外掉电」。
+- **为什么冷启动不读 ADC**：刷机后用户还没选接法时，固件既不知道用哪个唤醒脚、也不知道
+  分压接在哪一侧，拿电压猜就等于主动自锁倒灌。统一只按按键判，「没配置」这一状态本身
+  就不会倒灌。
+- **代价**：接法选错（如老排线选成默认档）时电池开不了机 —— 插 USB 进页面选对接法即可。
+
+**运行期轮询（仅自锁态）**
+
+| 情形 | 动作 |
+|---|---|
+| 自锁中，每 200 ms 采一次 ADC，**连续 3 次**（600 ms）> **4500 mV** | 释放自锁，改由 USB 供电 |
+| 未自锁（USB 开机） | 不采样（回调解首即返回） |
+| 接法 = 排线 **且** `line_v = 1`（新排线） | **整段跳过**（CH213K 已阻断；其 ADC 接 VSYS，插线会读到 5 V，照旧轮询会误断电池） |
+
+- **阈值 4500 mV**：单节锂电满电 4.2 V，留 0.3 V 余量（4.6~4.8 V 的劣质电源也判得出）。
+  电池带载通常 3.9~4.1 V，正常顶不到。3 次**去抖**把单点噪声的误判压到可忽略。
+- 采样成本可忽略：单点读 ~50 µs / 200 ms ⇒ 占空比 0.025%，平均增量 2~5 µA。
+
+**复位分支**
+
+- 深睡唤醒（`ESP_RST_DEEPSLEEP`）：**不改 GPIO2 电平**，hold 已锁存。
+- 软复位 / WDT / OTA：按 `RTC_DATA_ATTR` 记忆恢复（魔数 `0x4D4F494E`），
+  避免「USB 供电下重启」因按键是松的而被判成电池开机。
+- RTC 域只在真断电时丢 ⇒ 魔数正好区分「冷启动」与「运行中重启」。
+
+**深睡锁存**：按当前状态锁电平 —— 未自锁（USB）时锁「低」，电池隔离；否则深睡期间
+插着线会 5 V 倒灌电池，而芯片睡着时没有发现手段（C3 的 ULP 访问不到 SAR ADC，
+GPIO 唤醒阈值固定 ≈1.8 V 不可配）。
+
+**排线版本 `line_v`**
+
+| `gpio_preset` | `line_v` | 轮询 | 电池供电下的「休眠」 |
+|---|---|---|---|
+| 排线（1） | 0 = 老排线（**默认**） | 执行 | **禁止**，强制按「关机」处理 |
+| 排线（1） | 1 = 新排线 | **跳过** | 允许 |
+| 其他档 | 忽略 | 执行 | 允许 |
+
+- **老排线**：休眠期间插 USB 只会持续倒灌，固件无从察觉 ⇒ 不给睡。逻辑在
+  `idle_monitor_task`：`gpio_preset == 排线 && line_v == 0 && 已自锁` 时走
+  `power_self_lock_off()`。USB 供电（未自锁）时不拦 —— 此时电池已隔离，睡下去也安全。
+- **新排线**：串联 CH213K 理想二极管做反向阻断，自锁也无倒灌风险；ADC 分压改接 VSYS。
+  轮询对它只会帮倒忙（插线读到 5 V → 误断电池 → 拔线断电），故整段跳过。
+- **默认 `line_v = 0`（安全侧）**：误选成「新排线」会真倒灌，反向误选只是少睡一觉。
+- 走关机路径时若板上无自锁电路，`power_self_lock_off()` 会退回深睡（既有行为）。
+
+**行为变化**：USB 供电下不自锁 ⇒ **拔线即断电**，需按键开机；按键须按到 `app_main`
+（约 0.3 s）。老排线在电池供电下不再休眠，需按键或（USB 供电时的）定时唤醒才会重新点亮。
 
 ## 6. HTTP API 路由（`api = 2`）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/` | 控制页（web 分区优先，否则内嵌页） |
-| GET | `/api/info` | 状态 JSON：**ver**/fw/api/panel/**gpio_preset**/heap/bat_mv/sleep_s/wake_s/clients/ssid/uptime/**store_slots**/**store_count**/**store_cur**/**wake_reason**/**wake_bits**/**net_on**/**napt**/**sta_connected**/**sta_ssid**/**sta_ip**/**sta_rssi**（`ver` = 当前生效版本，`wake_reason` 见 §5.2；`bat_mv` 语义见 §6.2.2；`net_*` / `sta_*` 见 §6.3） |
-| GET | `/api/settings` | 读设置 JSON：panel/hflip/wifi_pwr/**gpio_preset**/**pins[8]**/sleep_s/**timeout_action**/wake_s/**wake_show**/ssid/pass_set |
-| POST | `/api/settings` | 写设置（`panel`/`hflip`/`gpio_preset`（自定义档另带 `p_adc`/`p_wake`/`p_sck`/`p_mosi`/`p_cs`/`p_dc`/`p_rst`/`p_busy`）/`sleep_s`/**`timeout_action`**/`wake_s`/**`wake_show`**；热点凭据单字段更新见 §7） |
+| GET | `/api/info` | 状态 JSON：**ver**/fw/api/panel/**gpio_preset**/heap/bat_mv/sleep_s/wake_s/clients/ssid/uptime/**store_slots**/**store_count**/**store_cur**/**wake_reason**/**wake_bits**/**net_on**/**napt**/**sta_connected**/**sta_ssid**/**sta_ip**/**sta_rssi**/**usb**（`ver` = 当前生效版本，`wake_reason` 见 §5.2；`bat_mv` 语义见 §6.2.2；`net_*` / `sta_*` 见 §6.3；`usb` = 是否判定为 USB 供电，见 §5.4） |
+| GET | `/api/settings` | 读设置 JSON：panel/hflip/wifi_pwr/**gpio_preset**/**pins[8]**/sleep_s/**timeout_action**/**line_v**/wake_s/**wake_show**/ssid/pass_set（`line_v` 见 §5.4） |
+| POST | `/api/settings` | 写设置（`panel`/`hflip`/`gpio_preset`（自定义档另带 `p_adc`/`p_wake`/`p_sck`/`p_mosi`/`p_cs`/`p_dc`/`p_rst`/`p_busy`）/`sleep_s`/**`timeout_action`**/**`line_v`**/`wake_s`/**`wake_show`**；热点凭据单字段更新见 §7） |
 | POST | `/api/frame` | 传图（§1 帧格式）。query：`save=1` 存轮播槽并显示、`save=1&noshow=1` 只存不显示、`tlen=N` 随帧携带缩略（§1.1）。无 `save` = 只显示不存 |
 | GET | **`/api/net`** | 联网状态 JSON（R1.3.5）：`{on,napt_on,napt,connected,ssid,ip,rssi,trying,count,list[{ssid,has_pass}]}`。**不回传密码**；`list` 顺序即尝试优先级 |
 | POST | **`/api/net`** | 上游 WiFi 管理（R1.3.5）：`action=add&ssid=..&pass=..`（同名更新密码并置顶）/ `action=del&idx=N` / `action=clear`；不带 `action` 时按 `on=0|1`、`napt=0|1` 改开关。详见 §6.3 |

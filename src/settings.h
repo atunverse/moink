@@ -55,6 +55,18 @@ typedef struct {
 #define SETT_ACTION_SLEEP 0   /* 进入深睡（可配自动唤醒） */
 #define SETT_ACTION_OFF   1   /* 释放自锁断电（需硬件自锁电路，见 PIN_SELF_LOCK） */
 
+/* 排线版本（R1.3.6）：只在 gpio_preset == GPIO_PRESET_LINE 时有意义。
+ *
+ *   老排线：电池经背靠背 AO3401 直接接 VSYS。自锁导通时插 USB，5 V 会经 MOS
+ *           压在电芯上（3~4 A，无 CC/CV）⇒ 电池供电下不允许休眠（深睡中插线
+ *           芯片无从发现），且运行期每 200 ms 查一次电压，超阈值即释放自锁。
+ *   新排线：串联 CH213K 理想二极管做反向阻断，自锁也无倒灌风险；ADC 分压改接
+ *           VSYS，任何时刻都能读到 5 V ⇒ 不轮询（轮询反而会误断电池）、允许休眠。
+ *
+ * ★ 默认老排线（安全侧）：误选成新排线会真倒灌，反向误选只是少睡一觉。 */
+#define LINE_VER_OLD      0
+#define LINE_VER_NEW      1
+
 /* WiFi 发射功率档位。高 = 18dBm；中 = 10dBm；低 = 8.5dBm（R1.3.3 起为默认档）。 */
 #define SETT_WIFI_PWR_HIGH  0
 #define SETT_WIFI_PWR_MID   1
@@ -87,8 +99,10 @@ enum {
 };
 
 /*
- * MOS 自锁一键开机脚：固件固定 GPIO2，上电第一件事就拉高并保持，
- * 深睡前锁存电平防止掉电。不对外开放配置（自定义菜单里也会排除它）。
+ * MOS 自锁一键开机脚：固件固定 GPIO2，高 = 导通 = 电池供电。
+ * R1.3.6 起不再「上电即拉高」—— 先定态为低，由供电来源判据决定是否导通
+ * （见 power.h 与 docs/CONTRACT.md §5.4），深睡按当前状态锁存电平。
+ * 不对外开放配置（自定义菜单里也会排除它）。
  */
 #define PIN_SELF_LOCK  2
 
@@ -124,6 +138,7 @@ typedef struct {
     pin_cfg_t pins;      /* 生效引脚表（CUSTOM 时即用户所填，否则等于对应预设） */
     uint32_t sleep_s;    /* 空闲超时时长；0 = 不超时（既不睡也不关） */
     uint8_t  timeout_action; /* SETT_ACTION_SLEEP / SETT_ACTION_OFF（R1.3.3） */
+    uint8_t  line_ver;       /* LINE_VER_OLD / LINE_VER_NEW（R1.3.6，仅排线档有意义） */
     uint32_t wake_s;     /* 定时自动唤醒间隔；0 = 关闭 */
     uint8_t  wake_show;  /* 定时唤醒后自动切到下一张；1 = 是（默认，R1.3.3） */
     char     ap_ssid[SETT_SSID_MAX];  /* 空 = 用默认 MoInk-XXXX */
@@ -148,6 +163,8 @@ esp_err_t settings_set_sleep(uint32_t v);
 esp_err_t settings_set_wake(uint32_t v);
 /* R1.3.3：空闲超时后的动作（休眠 / 关机断电）。 */
 esp_err_t settings_set_timeout_action(uint8_t v);
+/* R1.3.6：排线版本（LINE_VER_OLD / LINE_VER_NEW）。老排线在电池供电下禁止休眠。 */
+esp_err_t settings_set_line_ver(uint8_t v);
 /* R1.3.3：定时唤醒后是否自动切图（默认 1）。 */
 esp_err_t settings_set_wake_show(uint8_t v);
 /*

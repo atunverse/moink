@@ -21,21 +21,23 @@
   <text x="60" y="206" class="s">• 合成 105,984B 四色帧</text>
 
   <!-- ESP32 -->
-  <rect x="330" y="70" width="220" height="150" rx="8" class="box"/>
+  <rect x="330" y="70" width="220" height="170" rx="8" class="box"/>
   <text x="440" y="96" text-anchor="middle" class="t">🔌 ESP32-C3 固件</text>
   <text x="440" y="120" text-anchor="middle" class="s">SoftAP + HTTP 服务</text>
   <text x="350" y="146" class="s">• 帧头校验（CRC16-CCITT）</text>
   <text x="350" y="166" class="s">• OTA / 页面热更（CRC32 自愈）</text>
   <text x="350" y="186" class="s">• NVS 设置 / 电池 ADC</text>
   <text x="350" y="206" class="s">• 深度睡眠 / 按键唤醒</text>
+  <text x="350" y="226" class="s">• 8 槽轮播 / 可选联网转发</text>
 
   <!-- 屏幕 -->
   <rect x="620" y="70" width="200" height="150" rx="8" class="box"/>
   <text x="720" y="96" text-anchor="middle" class="t">🪟 四色墨水屏</text>
   <text x="720" y="120" text-anchor="middle" class="s">768×552 · 黑/白/黄/红</text>
-  <text x="640" y="146" class="s">• SPI 驱动（A0 隔行映射）</text>
+  <text x="640" y="146" class="s">• SPI 驱动（A0 / A1 两批次）</text>
   <text x="640" y="166" class="s">• 整帧刷写后锁屏</text>
   <text x="640" y="186" class="s">• 断电画面永久保持</text>
+  <text x="640" y="206" class="s">• 自锁供电 / 防倒灌判定</text>
 
   <path class="arr" d="M262,130 L328,130"/>
   <path class="arr" d="M552,130 L618,130"/>

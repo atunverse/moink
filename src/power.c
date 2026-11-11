@@ -5,7 +5,11 @@
 
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_attr.h"
+#include "esp_rom_sys.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -34,27 +38,35 @@ static adc_oneshot_unit_handle_t s_adc;
 static TickType_t s_last_activity;
 static bool s_auto_wake = false;
 
+/* R1.3.6 供电来源判定。RTC 内存跨深睡与软件复位存活、只有真断电才丢 ——
+   正好用来区分「冷启动」与「运行中重启」。 */
+#define LOCK_MAGIC        0x4D4F494EUL   /* "MOIN" */
+/* 阈值 4.5 V：单节锂电满电 4.2 V，留 0.3 V 余量（4.6~4.8 V 的劣质电源也判得出）。
+   电池带载通常 3.9~4.1 V，正常顶不到。 */
+#define USB_MV_THRESHOLD  4500
+#define USB_POLL_US       200000
+#define USB_HITS_NEED     3              /* 连续 3 次（600 ms）才认，防单点噪声 */
+
+RTC_DATA_ATTR static uint32_t s_lock_magic;
+RTC_DATA_ATTR static uint8_t  s_lock_want;   /* 1 = 电池自锁，0 = USB 不自锁 */
+static bool     s_usb_pwr = false;
+static uint8_t  s_usb_hits;
+static esp_timer_handle_t s_usb_timer;
+
 /* R1.2.2：唤醒脚与电池 ADC 脚改为运行时从 settings_pins() 取。
    ADC 通道与引脚在 ESP32-C3 上固定绑定：GPIO0..4 = ADC1_CH0..CH4。 */
 static uint8_t s_wake_pin = 5;
 static adc_channel_t s_adc_ch = ADC_CHANNEL_0;
 
-void power_init(void)
+/* 电池 ADC：只用 ADC1（ADC2 与 WiFi 共用，不可用），通道随引脚。
+   幂等 —— power_lock_boot() 可能在 power_init() 之前就要读电压。 */
+static void power_adc_init(void)
 {
+    if (s_adc != NULL) return;
+
     const pin_cfg_t *p = settings_pins();
-    s_wake_pin = p->v[PIN_IDX_WAKE];
-    s_adc_ch   = (adc_channel_t)p->v[PIN_IDX_ADC];
+    s_adc_ch = (adc_channel_t)p->v[PIN_IDX_ADC];
 
-    gpio_config_t btn = {
-        .pin_bit_mask = 1ULL << s_wake_pin,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    ESP_ERROR_CHECK(gpio_config(&btn));
-
-    /* 电池 ADC：只用 ADC1（ADC2 与 WiFi 共用，不可用），通道随引脚。 */
     adc_oneshot_unit_init_cfg_t u = {
         .unit_id = ADC_UNIT_1,
         .ulp_mode = ADC_ULP_MODE_DISABLE,
@@ -65,6 +77,23 @@ void power_init(void)
         .bitwidth = ADC_BITWIDTH_12,
     };
     ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc, s_adc_ch, &c));
+}
+
+void power_init(void)
+{
+    const pin_cfg_t *p = settings_pins();
+    s_wake_pin = p->v[PIN_IDX_WAKE];
+
+    gpio_config_t btn = {
+        .pin_bit_mask = 1ULL << s_wake_pin,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&btn));
+
+    power_adc_init();
 
     ESP_LOGI(TAG, "wake btn GPIO%u, battery ADC GPIO%u (ADC1_CH%d)",
              s_wake_pin, p->v[PIN_IDX_ADC], (int)s_adc_ch);
@@ -113,9 +142,12 @@ void power_enter_deep_sleep(void)
     ESP_ERROR_CHECK(esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown(
         1ULL << s_wake_pin, ESP_GPIO_WAKEUP_GPIO_LOW));
 
-    /* 自锁脚（MOS 一键开机）：深睡期间锁存为高电平，维持 MOS 持续导通。
-       数字域深睡会掉电、普通输出会变高阻，必须用 pad hold 保持；
-       上电时的首次拉高见 main.c。 */
+    /* 自锁脚：按当前电源状态锁存电平（R1.3.6）。
+       USB 供电（未自锁）时必须锁「低」—— 若照旧无条件锁高，深睡期间插着线就会
+       一直 5 V 倒灌电池，而芯片睡着时没有能力发现（C3 的 ULP 访问不到 SAR ADC）。 */
+    gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
+    gpio_set_direction((gpio_num_t)PIN_SELF_LOCK, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)PIN_SELF_LOCK, s_lock_want ? 1 : 0);
     gpio_hold_en((gpio_num_t)PIN_SELF_LOCK);
     gpio_deep_sleep_hold_en();
 
@@ -128,8 +160,8 @@ void power_enter_deep_sleep(void)
         esp_sleep_enable_timer_wakeup((uint64_t)wake_s * 1000000ULL);
     }
 
-    ESP_LOGI(TAG, "deep sleep (btn GPIO%u low, timer %lus, self-lock GPIO%d held)",
-             s_wake_pin, (unsigned long)wake_s, PIN_SELF_LOCK);
+    ESP_LOGI(TAG, "deep sleep (btn GPIO%u low, timer %lus, self-lock GPIO%d held=%d)",
+             s_wake_pin, (unsigned long)wake_s, PIN_SELF_LOCK, s_lock_want ? 1 : 0);
     vTaskDelay(pdMS_TO_TICKS(200));
     esp_deep_sleep_start();
 }
@@ -139,9 +171,13 @@ void power_self_lock_off(void)
     ESP_LOGW(TAG, "timeout action = off: release self-lock GPIO%d", PIN_SELF_LOCK);
 
     /* 自锁 = MOS 一键开机：GPIO2 输出高 → MOS 导通维持供电，拉低即断电。
-       有自锁电路时约 100 ms 内失电，下面的代码不会执行到。 */
+       有自锁电路时约 100 ms 内失电，下面的代码不会执行到。
+       深睡唤醒后 hold 可能仍生效，必须先解除，否则 set_level 静默无效。 */
+    gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
     gpio_set_direction((gpio_num_t)PIN_SELF_LOCK, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)PIN_SELF_LOCK, 0);
+    s_lock_want = 0;
+    s_usb_pwr   = true;
 
     /* 无自锁电路（USB 供电 / 未装 MOS）时拉低无效：1 s 后退回深睡，
        避免设备一直空转耗电（此时 hold 会锁住低电平，MOS 若存在仍保持关断）。 */
@@ -187,4 +223,135 @@ int power_battery_mv(void)
     if (med < BAT_MV_MIN || med > BAT_MV_MAX) return -1;
     if (spread > BAT_SPREAD_MAX) return -1;
     return med;
+}
+
+
+/* ---------------- R1.3.6 供电来源判定 ---------------- */
+
+void power_lock_gpio_init(void)
+{
+    gpio_config_t c = {
+        .pin_bit_mask = 1ULL << PIN_SELF_LOCK,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&c);
+    gpio_set_level((gpio_num_t)PIN_SELF_LOCK, 0);   /* 先断开，等判据 */
+}
+
+bool power_lock_boot(void)
+{
+    esp_reset_reason_t rr = esp_reset_reason();
+    bool fresh = (s_lock_magic != LOCK_MAGIC);
+    s_lock_magic = LOCK_MAGIC;
+
+    /* 深睡唤醒：hold 仍锁存着上次的电平，动它会直接改供电状态。 */
+    if (!fresh && rr == ESP_RST_DEEPSLEEP) {
+        s_usb_pwr = (s_lock_want == 0);
+        gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
+        return s_lock_want != 0;
+    }
+    /* 软件复位 / WDT / OTA：设备本来就在跑，按键是松的，不能用按键判据。 */
+    if (!fresh) {
+        s_usb_pwr = (s_lock_want == 0);
+        gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
+        gpio_set_direction((gpio_num_t)PIN_SELF_LOCK, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)PIN_SELF_LOCK, s_lock_want ? 1 : 0);
+        return s_lock_want != 0;
+    }
+
+    /* ---- 真冷启动：只认按键，不看电压 ----
+       电池能到达 VSYS 的唯一路径是「按键按住」，USB 上电则没人按键
+       ⇒ 按键已松，必然意味着有另一路电源 ⇒ 不自锁。
+       只可能漏判成「开机失败」（按太短 / 接法选错），不会误判成「意外掉电」。
+       冷启动刻意不读 ADC：刷机后用户还没选接法，固件既不知道用哪个唤醒脚、
+       也不知道分压接在哪一侧，拿电压猜就等于主动自锁倒灌。 */
+    uint8_t wk = settings_pins()->v[PIN_IDX_WAKE];
+    gpio_config_t btn = {
+        .pin_bit_mask = 1ULL << wk,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&btn);
+    esp_rom_delay_us(2000);   /* 等内部上拉把脚位拉稳 */
+
+    bool pressed = (gpio_get_level((gpio_num_t)wk) == 0);
+    s_lock_want = pressed ? 1 : 0;
+    s_usb_pwr   = !pressed;
+    gpio_set_level((gpio_num_t)PIN_SELF_LOCK, pressed ? 1 : 0);
+    return pressed;
+}
+
+void power_lock_release(void)
+{
+    if (s_lock_want == 0) return;
+    gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
+    gpio_set_direction((gpio_num_t)PIN_SELF_LOCK, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)PIN_SELF_LOCK, 0);
+    s_lock_want = 0;
+    s_usb_pwr   = true;
+}
+
+bool power_self_locked(void) { return s_lock_want != 0; }
+bool power_usb_powered(void) { return s_usb_pwr; }
+
+int power_vsys_mv(void)
+{
+    if (s_adc == NULL) return -1;
+    int raw = 0;
+    if (adc_oneshot_read(s_adc, s_adc_ch, &raw) != ESP_OK) return -1;
+    /* 乘法顺序同 power_battery_mv：先除再乘，避免 raw*3100*200 溢出 int */
+    return raw * BAT_FULLSCALE_MV / BAT_ADC_MAX * BAT_DIV_NUM / BAT_DIV_DEN;
+}
+
+/* 只在自锁态（电池供电）才需要查：不自锁时电池已隔离，读了也没意义。
+   新排线整段跳过 —— CH213K 已反向阻断，而它的 ADC 接 VSYS，插线会读到 5 V，
+   照旧轮询反而会在 600 ms 内把电池通路切掉（拔线即断电）。
+   连续 USB_HITS_NEED 次超阈值才释放：阈值与满电只差 0.3 V，单点噪声需去抖。 */
+static void usb_poll_cb(void *arg)
+{
+    (void)arg;
+
+    if (s_lock_want == 0) {
+        s_usb_hits = 0;
+        return;
+    }
+
+    const moink_settings_t *st = settings_get();
+    if (st->gpio_preset == GPIO_PRESET_LINE && st->line_ver == LINE_VER_NEW) {
+        s_usb_hits = 0;
+        return;
+    }
+
+    int mv = power_vsys_mv();
+    if (mv < 0) return;
+
+    if (mv > USB_MV_THRESHOLD) {
+        if (++s_usb_hits >= USB_HITS_NEED) {
+            s_usb_hits = 0;
+            power_lock_release();
+            /* 日志级别被压到 ERROR，这里用 LOGE 才看得见。 */
+            ESP_LOGE(TAG, "[pwr] USB %d mV, release self-lock", mv);
+        }
+    } else {
+        s_usb_hits = 0;
+    }
+}
+
+void power_usb_monitor_start(void)
+{
+    if (s_usb_timer != NULL) return;
+    esp_timer_create_args_t a = {
+        .callback = usb_poll_cb,
+        .name     = "usb_poll",
+    };
+    if (esp_timer_create(&a, &s_usb_timer) != ESP_OK) {
+        ESP_LOGE(TAG, "[pwr] usb timer create failed");
+        return;
+    }
+    esp_timer_start_periodic(s_usb_timer, USB_POLL_US);
 }

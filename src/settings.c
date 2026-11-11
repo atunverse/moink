@@ -61,6 +61,7 @@ static const moink_settings_t DEFAULTS = {
     .pins        = { { 0, 5, 4, 6, 7, 1, 3, 10 } },   /* 与 PIN_PRESETS[0] 一致 */
     .sleep_s     = SETT_SLEEP_3MIN,
     .timeout_action = SETT_ACTION_SLEEP,
+    .line_ver    = LINE_VER_OLD,   /* R1.3.6：默认老排线（安全侧） */
     .wake_s      = SETT_WAKE_OFF,
     .wake_show   = 1,        /* R1.3.3：定时唤醒后自动切图，默认开启 */
     .ap_ssid     = "",
@@ -123,6 +124,7 @@ void settings_init(void)
     read_u32("sleep_s", &s_cfg.sleep_s);
     read_u32("wake_s",  &s_cfg.wake_s);
     read_u8("to_act",   &s_cfg.timeout_action);   /* R1.3.3：无此键 = 默认休眠 */
+    read_u8("line_v",   &s_cfg.line_ver);         /* R1.3.6：无此键 = 老排线 */
     read_u8("wake_show", &s_cfg.wake_show);       /* R1.3.3：无此键 = 默认开 */
     read_str("ap_ssid", s_cfg.ap_ssid, SETT_SSID_MAX);
     read_str("ap_pass", s_cfg.ap_pass, SETT_PASS_MAX);
@@ -145,6 +147,7 @@ void settings_init(void)
     if (s_cfg.panel >= EPD_PANEL_COUNT) s_cfg.panel = DEFAULTS.panel;
     if (s_cfg.hflip) s_cfg.hflip = 1;
     if (s_cfg.timeout_action > SETT_ACTION_OFF) s_cfg.timeout_action = SETT_ACTION_SLEEP;
+    if (s_cfg.line_ver > LINE_VER_NEW) s_cfg.line_ver = LINE_VER_OLD;
     if (s_cfg.wake_show) s_cfg.wake_show = 1;
 
     /* R1.3.5：WiFi 列表校正。计数越界即视为空；字符串强制收尾；
@@ -291,6 +294,15 @@ esp_err_t settings_set_timeout_action(uint8_t v)
     if (v > SETT_ACTION_OFF) return ESP_ERR_INVALID_ARG;
     s_cfg.timeout_action = v;
     store_u8("to_act", v);
+    settings_commit();
+    return ESP_OK;
+}
+
+esp_err_t settings_set_line_ver(uint8_t v)
+{
+    if (v > LINE_VER_NEW) return ESP_ERR_INVALID_ARG;
+    s_cfg.line_ver = v;
+    store_u8("line_v", v);
     settings_commit();
     return ESP_OK;
 }
