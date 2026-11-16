@@ -290,6 +290,6 @@
  * ────────────────────────────────────────────────────────────────
  */
 #define MOINK_API_VERSION   2
-#define MOINK_VERSION       "R1.3.6"
+#define MOINK_VERSION       "R1.3.7"
 
 #endif /* MOINK_VERSION_H */

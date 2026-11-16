@@ -15,6 +15,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include <stdio.h>   /* snprintf：冷启动判据诊断行 */
+
 static const char *TAG = "power";
 
 #define AUTO_WAKE_WINDOW_S 180   /* 定时唤醒后等人的窗口（秒） */
@@ -268,18 +270,59 @@ bool power_lock_boot(void)
        只可能漏判成「开机失败」（按太短 / 接法选错），不会误判成「意外掉电」。
        冷启动刻意不读 ADC：刷机后用户还没选接法，固件既不知道用哪个唤醒脚、
        也不知道分压接在哪一侧，拿电压猜就等于主动自锁倒灌。 */
-    uint8_t wk = settings_pins()->v[PIN_IDX_WAKE];
-    gpio_config_t btn = {
-        .pin_bit_mask = 1ULL << wk,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&btn);
+    /* ★★ R1.3.7（2026-11-17）：按键脚不能只认设置里那一个。
+       刚刷完机 / 恢复出厂时 GPIO 预设是「默认」（唤醒 = GPIO5），而排线与
+       整合板的电源键接在 GPIO1 —— 只读设置值必然读到悬空高电平，于是判成
+       「USB 上电」→ 不自锁 → 松开按键即断电（表现为「必须一直按住」）。
+       硬件只有三种固定接法，这里把「设置值 + 两种硬件固定值」都当候选，
+       任一为低即认定按键按住。误判代价是「USB 带电池时多导通 200 ms」，
+       由 idle_monitor 的 ADC 轮询发现 5 V 后立即释放，远小于开不了机的代价。 */
+    static const uint8_t EXTRA_KEY[] = { 5, 1 };   /* 默认档 / 排线·整合板 */
+
+    uint8_t cand[4];
+    int nc = 0;
+    cand[nc++] = settings_pins()->v[PIN_IDX_WAKE];
+    for (size_t i = 0; i < sizeof(EXTRA_KEY); i++) {
+        bool dup = false;
+        for (int k = 0; k < nc; k++)
+            if (cand[k] == EXTRA_KEY[i]) dup = true;
+        if (!dup && nc < (int)sizeof(cand)) cand[nc++] = EXTRA_KEY[i];
+    }
+
+    for (int i = 0; i < nc; i++) {
+        gpio_config_t btn = {
+            .pin_bit_mask = 1ULL << cand[i],
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&btn);
+    }
     esp_rom_delay_us(2000);   /* 等内部上拉把脚位拉稳 */
 
-    bool pressed = (gpio_get_level((gpio_num_t)wk) == 0);
+    /* 上电瞬间 VSYS 与引脚都在爬升，单次采样容易读到假高：
+       20 ms 窗口内连采 20 次（1 ms 间隔），任一脚任一次为低即认按下。 */
+    bool pressed = false;
+    int lv[4] = { 1, 1, 1, 1 };
+    for (int t = 0; t < 20 && !pressed; t++) {
+        for (int i = 0; i < nc; i++) {
+            if (gpio_get_level((gpio_num_t)cand[i]) == 0) {
+                lv[i] = 0;
+                pressed = true;
+            }
+        }
+        if (!pressed) esp_rom_delay_us(1000);
+    }
+
+    /* 用 LOGE 打：生产日志级别是 ERROR，LOGI 会被裁掉 */
+    char list[48];
+    int off = 0;
+    list[0] = '\0';
+    for (int i = 0; i < nc && off < (int)sizeof(list) - 12; i++)
+        off += snprintf(list + off, sizeof(list) - (size_t)off,
+                        " G%u=%d", (unsigned)cand[i], lv[i]);
+    ESP_LOGE(TAG, "[pwr] cold key:%s pressed=%d", list, (int)pressed);
     s_lock_want = pressed ? 1 : 0;
     s_usb_pwr   = !pressed;
     gpio_set_level((gpio_num_t)PIN_SELF_LOCK, pressed ? 1 : 0);
