@@ -173,7 +173,7 @@ static esp_err_t ota_stream(httpd_req_t *req, int pre)
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_sendstr(req, "OK firmware, rebooting");
     vTaskDelay(pdMS_TO_TICKS(1000));
-    esp_restart();
+    power_restart();
     return ESP_OK;
 }
 

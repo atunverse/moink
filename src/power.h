@@ -66,6 +66,11 @@ bool power_lock_boot(void);
 /* 释放自锁（切断电池通路，改由 USB 供电）。可重入。 */
 void power_lock_release(void);
 
+/* ★ 2026-11-17：软重启（替代 esp_restart）。
+   系统复位会把自锁脚输出清零 → 电池供电当场失电。改用「hold 自锁 + 深睡 +
+   定时唤醒」复位，自锁电平由 LP 域跨复位保持。所有主动重启都必须走这里。 */
+void power_restart(void);
+
 /* 当前是否处于自锁（电池供电）状态。 */
 bool power_self_locked(void);
 

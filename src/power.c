@@ -189,6 +189,33 @@ void power_self_lock_off(void)
     power_enter_deep_sleep();
 }
 
+/* ★ 2026-11-17：软重启绝不能再用 esp_restart()。
+   系统复位会把数字域整体复位，自锁脚 GPIO2 的输出寄存器清零 → MOS 断开 →
+   电池供电的设备当场失电，"重启"变成"关机"，自锁自然也就没了（表现为
+   「网页点应用并重启后设备关机」）。
+   深睡时 pad 电平由 LP 域保持，因此用「锁存自锁电平 + 深睡 + 定时唤醒」模拟
+   一次复位：唤醒后 reset reason = DEEPSLEEP、RTC 内存里的 s_lock_want 完好，
+   power_lock_boot() 走深睡分支，自锁不丢，其余初始化与冷启动完全一致。 */
+void power_restart(void)
+{
+    ESP_LOGW(TAG, "soft restart via deep sleep (self_lock=%d)", s_lock_want);
+
+    /* 其他唤醒源先清掉：按键 GPIO 唤醒若还挂着，理论上不会触发（键没按），
+       但复位语义上应当干净。 */
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+
+    /* 顺序同 power_enter_deep_sleep：先写电平，再 hold。 */
+    gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
+    gpio_set_direction((gpio_num_t)PIN_SELF_LOCK, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)PIN_SELF_LOCK, s_lock_want ? 1 : 0);
+    gpio_hold_en((gpio_num_t)PIN_SELF_LOCK);
+    gpio_deep_sleep_hold_en();
+
+    esp_sleep_enable_timer_wakeup(100ULL * 1000);   /* 100 ms 后醒来 = 重启 */
+    vTaskDelay(pdMS_TO_TICKS(60));                  /* 等日志与 HTTP 应答发完 */
+    esp_deep_sleep_start();
+}
+
 int power_battery_mv(void)
 {
     /* R1.3.4（FB-019）：**一次调用内完成全部采样**。
@@ -232,6 +259,12 @@ int power_battery_mv(void)
 
 void power_lock_gpio_init(void)
 {
+    /* ★ 2026-11-17：运行中软重启（深睡 / OTA / 恢复出厂）时，自锁脚可能正被
+       hold 锁在高电平维持供电。此刻绝不能拉低 —— 电池供电会当场掉电。
+       原样保留，交给 power_lock_boot() 统一收尾；冷启动时 magic 无效，
+       照旧先断开、等判据。 */
+    if (s_lock_magic == LOCK_MAGIC) return;
+
     gpio_config_t c = {
         .pin_bit_mask = 1ULL << PIN_SELF_LOCK,
         .mode = GPIO_MODE_OUTPUT,
@@ -252,15 +285,22 @@ bool power_lock_boot(void)
     /* 深睡唤醒：hold 仍锁存着上次的电平，动它会直接改供电状态。 */
     if (!fresh && rr == ESP_RST_DEEPSLEEP) {
         s_usb_pwr = (s_lock_want == 0);
+        /* ★ 2026-11-17 顺序修正：hold 生效期间写输出寄存器对外无效，因此必须
+           「设方向 → 写电平 → 最后解除 hold」。反过来会有一瞬由已复位为 0 的
+           输出寄存器驱动 pad，电池供电当场掉电。 */
+        gpio_set_direction((gpio_num_t)PIN_SELF_LOCK, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)PIN_SELF_LOCK, s_lock_want ? 1 : 0);
         gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
+        gpio_deep_sleep_hold_dis();
         return s_lock_want != 0;
     }
     /* 软件复位 / WDT / OTA：设备本来就在跑，按键是松的，不能用按键判据。 */
     if (!fresh) {
         s_usb_pwr = (s_lock_want == 0);
-        gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
+        /* ★ 2026-11-17：先写电平再解除 hold（理由同深睡分支）。 */
         gpio_set_direction((gpio_num_t)PIN_SELF_LOCK, GPIO_MODE_OUTPUT);
         gpio_set_level((gpio_num_t)PIN_SELF_LOCK, s_lock_want ? 1 : 0);
+        gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
         return s_lock_want != 0;
     }
 

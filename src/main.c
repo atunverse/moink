@@ -586,7 +586,7 @@ static esp_err_t factory_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_sendstr(req, "OK");
     vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
+    power_restart();
     return ESP_OK;
 }
 
@@ -871,7 +871,7 @@ static esp_err_t reboot_handler(httpd_req_t *req)
     httpd_resp_sendstr(req, "OK rebooting");
     ESP_LOGW(TAG, "reboot requested by page");
     vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
+    power_restart();
     return ESP_OK;
 }
 
@@ -1133,7 +1133,7 @@ static void button_task(void *arg)
                 ESP_LOGW(TAG, "long press %d s: factory reset + reboot", HOLD_RESET_S);
                 settings_factory_reset();
                 vTaskDelay(pdMS_TO_TICKS(300));
-                esp_restart();
+                power_restart();
             }
         } else if (st == ST_WAIT_SECOND) {
             if ((now - t_release) >= pdMS_TO_TICKS(BTN_DOUBLE_MS)) {
