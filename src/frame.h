@@ -29,12 +29,10 @@
 #define FRAME_FMT_VERSION 1          /* 基础格式（768x552 载荷） */
 #define FRAME_FMT_VERSION_NATIVE 2   /* A1 原生 800x600 载荷 */
 
-/* 尽早抢下帧缓冲（R1.3.5 修 OOM）：启动过程会把 DRAM 大块切碎，
-   到 frame_init() 时最大连续块可能已小于 120 KB。必须在 app_main 最前面调用。
-   可重复调用，已分配则直接返回。 */
+/* 打开 flash 落点（scratch 分区）。幂等；没有该分区只打日志，不影响其它功能。 */
 void frame_prealloc(void);
 
-/* 分配帧缓冲并创建同步量。 */
+/* 创建同步量。 */
 void frame_init(void);
 
 /* 阻塞等待一帧就绪（由上传处理器触发）。 */
@@ -54,7 +52,33 @@ int frame_clear_cycles(int cycles);
 esp_err_t frame_upload_handler(httpd_req_t *req);
 
 /* R1.3.0 轮播：读 store 槽 slot（头+载荷）-> 校验几何 -> 整屏显示。
-   与传图/残影清理共用帧缓冲锁。成功返回 0，空/坏槽或几何不符返回非 0。 */
+   与传图/残影清理共用帧锁。成功返回 0，空/坏槽或几何不符返回非 0。 */
 int frame_display_slot(int slot);
+
+/* ---------------- R1.4.0：流式帧落点（替代 120 KB 静态缓冲） ----------------
+ *
+ * 帧不再驻留 RAM：上传/远程下载都「边收边写」flash 里的 scratch 分区，
+ * 显示时用 esp_partition_mmap() 把同一块 flash 映射进地址空间，直接把只读
+ * 指针交给驱动 —— epd_write_frame_2bpp() 本来就是逐行读 src，零改动。
+ *
+ * 用法固定（三个终点互斥，全部负责解锁）：
+ *   if (frame_blob_begin() != 0) return -1;      // 擦 scratch + 取锁
+ *   while (...) frame_blob_append(d, n);         // 任意次
+ *   ...任意失败分支都调 frame_blob_abort()...
+ *   return frame_blob_commit_display(w, h);      // flush + 刷屏 + 解锁
+ *
+ * ★ 上传路径另外还要在解锁前自己 flush（frame_upload_handler 内部已处理）。
+ * ★ 锁被占（有别的刷屏在跑）时 begin 返回 -1，调用方应直接放弃。
+ */
+int  frame_blob_begin(void);
+int  frame_blob_append(const void *d, int n);
+int  frame_blob_commit_display(uint16_t w, uint16_t h);
+void frame_blob_abort(void);
+uint32_t frame_blob_bytes(void);
+
+/* 把 scratch 内容（头+载荷）映射成只读指针，供远程 PUT 直接发送。
+   成功返回基址（含 16 B 帧头），失败 NULL。调用方用完必须 frame_blob_unmap()。 */
+const uint8_t *frame_blob_map(void);
+void frame_blob_unmap(void);
 
 #endif /* MOINK_FRAME_H */

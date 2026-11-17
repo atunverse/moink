@@ -59,8 +59,8 @@ static const moink_settings_t DEFAULTS = {
     .wifi_pwr    = SETT_WIFI_PWR_LOW,   /* R1.3.3：默认改为低功率（8.5dBm） */
     .gpio_preset = GPIO_PRESET_DEFAULT,
     .pins        = { { 0, 5, 4, 6, 7, 1, 3, 10 } },   /* 与 PIN_PRESETS[0] 一致 */
-    .sleep_s     = SETT_SLEEP_3MIN,
-    .timeout_action = SETT_ACTION_SLEEP,
+    .sleep_s     = SETT_SLEEP_3MIN,          /* R1.4.0-3：默认 3 分钟 */
+    .timeout_action = SETT_ACTION_OFF,       /* R1.4.0-3：默认关机（释放自锁断电） */
     .line_ver    = LINE_VER_OLD,   /* R1.3.6：默认老排线（安全侧） */
     .wake_s      = SETT_WAKE_OFF,
     .wake_show   = 1,        /* R1.3.3：定时唤醒后自动切图，默认开启 */
@@ -71,6 +71,13 @@ static const moink_settings_t DEFAULTS = {
     .wifi_last   = 0xFF,     /* 0xFF = 尚无成功记录 */
     .net_on      = 0,
     .napt_on     = 0,
+    /* R1.4.0：实验项与远程图槽默认全部关闭 —— 升级后行为与旧固件一致 */
+    .remote_mode = SETT_REMOTE_OFF,
+    .remote_slot = 0xFF,     /* 0xFF = 还没有成功显示过任何一张 */
+    .remote_crc  = 0,
+    .remote_url  = "",
+    .remote_user = "",
+    .remote_pass = "",
 };
 
 /* 引脚 NVS 键名（逐个 u8 存；顺序与 PIN_IDX_* 一致）。 */
@@ -100,8 +107,9 @@ static void read_str(const char *key, char *out, size_t n)
     size_t need = 0;
     if (nvs_get_str(s_nvs, key, NULL, &need) != ESP_OK) return;
     if (need == 0 || need > n) return;
-    char tmp[SETT_PASS_MAX];
-    if (nvs_get_str(s_nvs, key, tmp, &need) == ESP_OK) strlcpy(out, tmp, n);
+    /* 直接读进目标缓冲：R1.4.0 的 remote_url 有 193 字节，
+       用固定的 SETT_PASS_MAX 中转会截断。need ≤ n 已校验，安全。 */
+    nvs_get_str(s_nvs, key, out, &need);
 }
 
 void settings_init(void)
@@ -123,7 +131,7 @@ void settings_init(void)
         read_u8(PIN_KEY[i], &s_cfg.pins.v[i]);
     read_u32("sleep_s", &s_cfg.sleep_s);
     read_u32("wake_s",  &s_cfg.wake_s);
-    read_u8("to_act",   &s_cfg.timeout_action);   /* R1.3.3：无此键 = 默认休眠 */
+    read_u8("to_act",   &s_cfg.timeout_action);   /* R1.3.3；无此键 = DEFAULTS */
     read_u8("line_v",   &s_cfg.line_ver);         /* R1.3.6：无此键 = 老排线 */
     read_u8("wake_show", &s_cfg.wake_show);       /* R1.3.3：无此键 = 默认开 */
     read_str("ap_ssid", s_cfg.ap_ssid, SETT_SSID_MAX);
@@ -143,10 +151,40 @@ void settings_init(void)
             nvs_get_blob(s_nvs, "wlist", s_cfg.wifi, &need);
     }
 
+    /* R1.4.0：实验项与远程图槽（旧固件没有这些键 ⇒ 保持默认 = 关闭）。
+       ★ 120Hz 不读 NVS：它是「本次运行」的实验档，重启必回动态档 ——
+         否则一旦 120Hz 把 WiFi 拖垮、页面开不了，用户就再也关不掉它。 */
+    read_u8("r_mode",  &s_cfg.remote_mode);
+    read_u8("r_slot",  &s_cfg.remote_slot);
+    read_u32("r_crc",  &s_cfg.remote_crc);
+    read_str("r_url",  s_cfg.remote_url,  SETT_URL_MAX);
+    read_str("r_user", s_cfg.remote_user, SETT_USER_MAX);
+    read_str("r_pass", s_cfg.remote_pass, SETT_RPASS_MAX);
+
+    /* ★ R1.4.0-3：默认值改为「关机 + 3 分钟」。老设备 NVS 里存的是旧默认
+       （休眠 + 5 分钟），这里只在首次升级到本版时改一次；之后用户在页面上的
+       选择照常生效（def2 = 已迁移标记，不会被再次覆盖）。 */
+    uint8_t def2 = 0;
+    read_u8("def2", &def2);
+    if (!def2) {
+        s_cfg.sleep_s        = SETT_SLEEP_3MIN;
+        s_cfg.timeout_action = SETT_ACTION_OFF;
+        if (s_ok) {
+            nvs_set_u32(s_nvs, "sleep_s", (uint32_t)s_cfg.sleep_s);
+            nvs_set_u8(s_nvs, "to_act", s_cfg.timeout_action);
+            nvs_set_u8(s_nvs, "def2", 1);
+            nvs_commit(s_nvs);
+        }
+        ESP_LOGW(TAG, "defaults migrated: timeout=180s, action=off");
+    }
+
     /* R1.2.0：旧值不再做兼容归一；越界一律回落到默认档。 */
     if (s_cfg.panel >= EPD_PANEL_COUNT) s_cfg.panel = DEFAULTS.panel;
-    if (s_cfg.hflip) s_cfg.hflip = 1;
-    if (s_cfg.timeout_action > SETT_ACTION_OFF) s_cfg.timeout_action = SETT_ACTION_SLEEP;
+    /* R1.4.0-3：「左右镜像」已从页面移除（对当前两档屏都无意义），
+       存量的 hflip=1 一律清掉，否则旧设备会保持一个改不回来的错误镜像。 */
+    s_cfg.hflip = 0;
+    if (s_cfg.timeout_action > SETT_ACTION_OFF)
+        s_cfg.timeout_action = DEFAULTS.timeout_action;
     if (s_cfg.line_ver > LINE_VER_NEW) s_cfg.line_ver = LINE_VER_OLD;
     if (s_cfg.wake_show) s_cfg.wake_show = 1;
 
@@ -161,6 +199,13 @@ void settings_init(void)
     if (s_cfg.wifi_last >= SETT_WIFI_MAX) s_cfg.wifi_last = 0xFF;
     s_cfg.net_on  = s_cfg.net_on  ? 1 : 0;
     s_cfg.napt_on = s_cfg.napt_on ? 1 : 0;
+
+    /* R1.4.0：越界一律回落默认（远程模式非法 = 关闭） */
+    if (s_cfg.remote_mode > SETT_REMOTE_MF) s_cfg.remote_mode = SETT_REMOTE_OFF;
+    if (s_cfg.remote_slot >= 0xFE) s_cfg.remote_slot = 0xFF;
+    s_cfg.remote_url[SETT_URL_MAX - 1]   = '\0';
+    s_cfg.remote_user[SETT_USER_MAX - 1] = '\0';
+    s_cfg.remote_pass[SETT_RPASS_MAX - 1] = '\0';
 
     /* 引脚：预设档直接用预设表；自定义档校验失败则整体回落默认（避免半套引脚
        启动，把设备带进「屏不亮」的不可诊断状态）。 */
@@ -192,6 +237,9 @@ void settings_init(void)
     for (int i = 0; i < (int)s_cfg.wifi_n; i++)
         ESP_LOGI(TAG, "  wifi[%d] '%s'%s", i, s_cfg.wifi[i].ssid,
                  s_cfg.wifi[i].pass[0] ? "" : " (open)");
+    ESP_LOGI(TAG, "remote mode=%u url='%s' slot=%d",
+             s_cfg.remote_url[0] ? s_cfg.remote_url : "(none)",
+             s_cfg.remote_slot == 0xFF ? -1 : (int)s_cfg.remote_slot);
 }
 
 const moink_settings_t *settings_get(void) { return &s_cfg; }
@@ -453,11 +501,56 @@ esp_err_t settings_set_napt(uint8_t on)
     return ESP_OK;
 }
 
+esp_err_t settings_set_remote_mode(uint8_t v)
+{
+    if (v > SETT_REMOTE_MF) return ESP_ERR_INVALID_ARG;
+    s_cfg.remote_mode = v;
+    store_u8("r_mode", v);
+    settings_commit();
+    return ESP_OK;
+}
+
+esp_err_t settings_set_remote_url(const char *url)
+{
+    if (!url) return ESP_OK;                 /* NULL = 保持当前值 */
+    if (strlen(url) >= SETT_URL_MAX) return ESP_ERR_INVALID_ARG;
+    strlcpy(s_cfg.remote_url, url, SETT_URL_MAX);
+    store_str("r_url", s_cfg.remote_url);
+    settings_commit();
+    return ESP_OK;
+}
+
+esp_err_t settings_set_remote_auth(const char *user, const char *pass)
+{
+    if (!user && !pass) return ESP_OK;
+    if (user) {
+        if (strlen(user) >= SETT_USER_MAX) return ESP_ERR_INVALID_ARG;
+        strlcpy(s_cfg.remote_user, user, SETT_USER_MAX);
+        store_str("r_user", s_cfg.remote_user);
+    }
+    if (pass) {
+        if (strlen(pass) >= SETT_RPASS_MAX) return ESP_ERR_INVALID_ARG;
+        strlcpy(s_cfg.remote_pass, pass, SETT_RPASS_MAX);
+        store_str("r_pass", s_cfg.remote_pass);
+    }
+    settings_commit();
+    return ESP_OK;
+}
+
+void settings_remote_mark(uint8_t slot, uint32_t crc)
+{
+    s_cfg.remote_slot = slot;
+    s_cfg.remote_crc  = crc;
+    store_u8("r_slot", slot);
+    store_u32("r_crc", crc);
+    settings_commit();
+}
+
 void settings_factory_reset(void)
 {
     /* R1.2.0（FB-015）：整个命名空间一起擦 —— 「恢复出厂」就该回到出厂状态。
-       旧实现刻意保留 web_len/web_crc/page_ver（页面热更标记），理由是「页面是
-       系统资产」；现在恢复出厂连热更页面一起清掉、回到内嵌页，才是预期行为。 */
+       R1.4.0（FB-027）起没有页面热更，web_len / web_crc / page_ver 这些旧键
+       出现在老设备上也只是被 nvs_erase_all 一并清掉，不影响流程。 */
     if (s_ok) {
         nvs_erase_all(s_nvs);
         nvs_commit(s_nvs);
@@ -477,6 +570,7 @@ void settings_reset_for_upgrade(void)
     static const char *DROP_KEYS[] = {
         "a1_mode",   /* R1.2.2：A1 只剩 768x552 顺序一档，旧档位值 1..4 已无对应含义 */
         "a11_var",   /* R1.2.0：A1.1 诊断变体整体删除 */
+        "exp_pll",   /* 120Hz 实验项已整体移除（2026-11-16），旧键顺手清掉 */
     };
 
     if (s_ok) {

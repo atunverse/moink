@@ -4,8 +4,8 @@
 check_algo.py —— 验证「图像算法冻结」：M7 页面与新页面的核心算法函数必须逐字一致。
 
 重构要求把 eink-warm 算法原样搬入（用户明确要求锁定不改）。本脚本从
-    eink-frame/src/index.html   （旧 M7 页，已上机验证）
-    page/index.html             （新页）
+    eink-frame/src/index.html       （旧 M7 页，已上机验证）
+    page/index.dev.html             （新页）
 各抽取一遍核心算法函数体，规范化空白后逐函数比对，任一不一致即 FAIL。
 
 【基线 B2，2026-09-22】FB-002 Stage A 整合（用户授权解锁）：quantize 允许
@@ -22,7 +22,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 OLD = os.path.join(os.path.dirname(ROOT), "eink-frame", "src", "index.html")
-NEW = os.path.join(ROOT, "page", "index.html")
+NEW = os.path.join(ROOT, "page", "index.dev.html")
 
 # 核心算法函数（含支撑函数）。这些必须原样保留。
 # 注：drawCropInto 已于 page R1.0.12 按设计退役（裁剪改由内嵌 Cropper.js 的
@@ -63,7 +63,28 @@ def norm(s):
     return re.sub(r"\s+", "", s)
 
 
-# 基线 B2：quantize 的 std 注入块（规范化文本，见 page/index.html STD_LUT/STD_PAL）
+# 基线 B3（R1.4.4）：quantize 增加可选第 5 参 mask，语义只有一条 ——
+#   mask[i]==0 的像素「不量化、不收误差、不向外扩散」，用于让表情/上传图片
+#   这类位图贴纸只在自己覆盖的像素上做抖动。mask 省略时结果必须与 B2 完全一致，
+#   因此这里把 mask 相关语句整体剥离后再与 M7 逐字比对。
+MASK_ONLY = [
+    r"/\*mask（可选）[^*]*\*/",
+    r"if\(mask&&!mask\[[^\]]+\]\)continue;",
+]
+
+
+def strip_mask(nb):
+    nb = nb.replace("functionquantize(mapped,w,h,cfg,mask){",
+                    "functionquantize(mapped,w,h,cfg){", 1)
+    for pat in MASK_ONLY:                 # 先剥 mask 语句，再收拾它留下的花括号
+        nb = re.sub(pat, "", nb)
+    # none 分支为了能 continue 加了花括号，剥掉后与原写法等价
+    nb = nb.replace("for(i=0;i<n;i++){out[i]=nearest(i*3);}",
+                    "for(i=0;i<n;i++)out[i]=nearest(i*3);", 1)
+    return nb
+
+
+# 基线 B2：quantize 的 std 注入块（规范化文本，见 page/index.dev.html STD_LUT/STD_PAL）
 STD_MARK = ('varCDEC=null;if(cfg.space==="std"){CDEC=STD_LUT;pal=STD_PAL;}'
             'if(CDEC){for(i=0;i<n*3;i++){varv=clamp(flat[i],0,255);'
             'flat[i]=CDEC[i%3][(v+0.5)|0];}}elseif(lin){')
@@ -90,7 +111,7 @@ def main():
                 print("DIFF  quantize (B2 std-block missing or duplicated)")
                 ok = False
                 continue
-            if nb.replace(STD_MARK, "if(lin){", 1) == norm(a):
+            if strip_mask(nb).replace(STD_MARK, "if(lin){", 1) == norm(a):
                 print("MATCH quantize (B2: std block stripped == M7)")
             else:
                 print("DIFF  quantize (B2: stripped body != M7)")

@@ -2,7 +2,20 @@
 
 > 本文档是**固件与页面之间的唯一权威接口定义**，以及**屏驱动的物理契约**。
 > 改动任何一条必须同步更新 `check_frame.py` / `smoke_page.js` 并全量回归。
-> 版本：version = R1.3.6（固件与控制页共用这一个号），api = 2。
+> 版本：version = R1.4.0（固件与控制页共用这一个号），api = 2。
+
+> **控制页两份产物（R1.4.0 定版）**，由 `page/build.py` 一次生成，页面内容一致、
+> 只差注释与空白，**meta 版本号都取 `src/version.h` 的 `MOINK_VERSION`**：
+>
+> | 文件 | 用途 | 注释 |
+> |---|---|---|
+> | `page/index.html` | **成品页**：`tools/make_index_header.py` 固化进 `src/index_html.h`（随固件编译） | **零注释**，236,910 B |
+> | `page/index.dev.html` | **测试页**：全部门禁 / 截图 / 本地逐行调试（含 `check_algo.py` 的 M7 逐字比对） | 保留全部注释与缩进，350,849 B |
+>
+> `make_index_header.py` 带零注释闸门，误把测试页当成品页固化会直接拒绝；
+> 反过来，门禁必须跑在测试页上，否则基于源码文本的断言会失真。
+> 固件逻辑侧零改动，`src/` 只有 `version.h` / `ota_web.c` 的注释与自动生成的
+> `index_html.h` 发生变化。
 
 ---
 
@@ -102,8 +115,19 @@ body = 帧头(16B) + 2bpp 帧载荷(len) + 缩略头(16B) + 缩略载荷(tlen)
 - 768×552 内容 **1:1 落在 552 条可见栅极上**：不裁切、不重采样、无白边。
 - 设置页「A1 驱动」二级菜单（原来的 768×552 / 800×600 二选一）已删除，`a1_mode`
   键与 `/api/*` 字段一并移除；800×600 对照诊断档不再存在。
-- 「左右镜像」勾选框保留但**当前无生效档位**（唯一生效对象是已删除的 800×600 档），
-  后续版本可一并清理。
+- 「左右镜像」（`hflip`）**已在 R1.4.0-3 下线**：控制页勾选框删除，固件启动时把
+  `hflip` 一律归 0（旧设备存量值也清掉）。对 A0 / A1 两档屏都没有正确用途。
+
+### 4.4 上下倒装（R1.4.0-3，纯页面侧）
+
+屏幕**上下颠倒安装**时，在控制页「屏幕」里勾选「上下旋转」即可：页面在**输出阶段**
+把 2bpp 帧整体旋转 180°（`rot180Payload()`），固件与驱动**零改动**。
+
+- 原理：`packIdx()` 内已含一次 180° 预旋转（与驱动「底→上行序 + 行内镜像」相抵，
+  屏上才是正向）；再转一次即整体倒过来。
+- 只作用于**输出帧**：预览、图库缩略图仍是正向，避免出现「缩略图倒着」的困惑。
+- 该开关是**页面本地偏好**（`cfg.vrot`，存 localStorage），不写设备 NVS ——
+  换手机 / 清缓存后需重新勾选。
 
 ### 4.3 画像表
 
@@ -124,6 +148,22 @@ body = 帧头(16B) + 2bpp 帧载荷(len) + 缩略头(16B) + 缩略载荷(tlen)
 - 面板切换**运行时生效，无需重刷**，且**不能随帧切换**（帧头 hdr[3] 仅信息性）。
 - 显示名：`epd_panel_name()` 返回 `"A0"` / `"A1"`。
 - 帧缓冲静态分配按最大合法载荷 `800/4 × 600 = 120000` 字节（`EPD_MAX_BUF_LEN`）。
+
+### 4.4 帧率（PLL）—— 固定原厂动态档，120 Hz 已移除
+
+`R30H` 是 PLL 控制：低 3 位选帧率（`000`=12.5 / `001`=25 / `010`=50 / `011`=65 /
+`100`=75 / `101`=85 / `110`=100 / `111`=120 Hz），bit3 = 动态帧率使能。
+
+| 档位 | 参数 | 说明 |
+|---|---|---|
+| 驱动唯一档（`EPD_PLL_DYNAMIC`） | `0x08` | 原厂行为：动态帧率开 + 档位 000，空闲自动降频，最省电 |
+
+- **只影响 A1 面板** —— A0 的初始化序列不发 `0x30`；A1 在 `epd_panel_init_a1()` 里下发。
+- ★ **120 Hz 已移除（2026-11-16 实测定案）**：上机测得 120 Hz 档（`0x07` / `0x0F`）
+  与动态档的整屏刷新都是 **~15 s**（16,000 ms 级），面板 BUSY 全程不释放，
+  扫描时钟不是瓶颈 → 没有任何收益。此前 `0x07` 还因为关掉 bit3 动态帧率、
+  让面板常驻高速，把 WiFi 拖成「很慢 → 打不开网页」，事故记录见 CHANGELOG。
+  现已删除 `exp_pll` 设置项、`epd_set_pll()` 与页面勾选框，PLL 固定 `0x08`。
 
 ## 5. 引脚映射（R1.2.2 起运行时可配）
 
@@ -206,8 +246,12 @@ OTA 重启、恢复出厂重启、复位都归为 `power_on`。
 
 | `timeout_action` | 动作 | 说明 |
 |---|---|---|
-| `0` sleep（默认） | 深睡 | 可配 `wake_s` 定时自动唤醒；唤醒后按 `wake_show` 决定是否切图 |
-| `1` off | 关机 | 释放自锁脚断电（见下），**不区分 GPIO 接法** |
+| `0` sleep | 深睡 | 可配 `wake_s` 定时自动唤醒；唤醒后按 `wake_show` 决定是否切图 |
+| `1` off（**R1.4.0-3 起为默认**） | 关机 | 释放自锁脚断电（见下），**不区分 GPIO 接法** |
+
+**默认值（R1.4.0-3）**：`sleep_s = 180`（3 分钟）、`timeout_action = 1`（关机）。
+老设备 NVS 里存的是旧默认（300 / 休眠），首次升级到本版时会**按新默认改一次**并写入
+标记键 `def2 = 1`；此后用户在页面上的选择照常生效，不会被再次覆盖。
 
 - `sleep_s = 0`（不超时）时两个动作都不执行，设备常亮。
 - **关机实现**：`power_self_lock_off()` 先 `gpio_hold_dis()` 再拉低 GPIO2，切断 MOS 自锁供电
@@ -289,12 +333,14 @@ GPIO 唤醒阈值固定 ≈1.8 V 不可配）。
 |---|---|---|
 | GET | `/` | 控制页（web 分区优先，否则内嵌页） |
 | GET | `/api/info` | 状态 JSON：**ver**/fw/api/panel/**gpio_preset**/heap/bat_mv/sleep_s/wake_s/clients/ssid/uptime/**store_slots**/**store_count**/**store_cur**/**wake_reason**/**wake_bits**/**net_on**/**napt**/**sta_connected**/**sta_ssid**/**sta_ip**/**sta_rssi**/**usb**（`ver` = 当前生效版本，`wake_reason` 见 §5.2；`bat_mv` 语义见 §6.2.2；`net_*` / `sta_*` 见 §6.3；`usb` = 是否判定为 USB 供电，见 §5.4） |
-| GET | `/api/settings` | 读设置 JSON：panel/hflip/wifi_pwr/**gpio_preset**/**pins[8]**/sleep_s/**timeout_action**/**line_v**/wake_s/**wake_show**/ssid/pass_set（`line_v` 见 §5.4） |
-| POST | `/api/settings` | 写设置（`panel`/`hflip`/`gpio_preset`（自定义档另带 `p_adc`/`p_wake`/`p_sck`/`p_mosi`/`p_cs`/`p_dc`/`p_rst`/`p_busy`）/`sleep_s`/**`timeout_action`**/**`line_v`**/`wake_s`/**`wake_show`**；热点凭据单字段更新见 §7） |
-| POST | `/api/frame` | 传图（§1 帧格式）。query：`save=1` 存轮播槽并显示、`save=1&noshow=1` 只存不显示、`tlen=N` 随帧携带缩略（§1.1）。无 `save` = 只显示不存 |
+| GET | `/api/settings` | 读设置 JSON：panel/hflip/wifi_pwr/**gpio_preset**/**pins[8]**/sleep_s/**timeout_action**/**line_v**/wake_s/**wake_show**/ssid/pass_set/**pll**/**r_mode**/**r_url**/**r_user**/**r_pass_set**/**r_slot**/**r_count**（`line_v` 见 §5.4；`pll`、`r_*` 见 §6.4） |
+| POST | `/api/settings` | 写设置（`panel`/`hflip`/`gpio_preset`（自定义档另带 `p_adc`/`p_wake`/`p_sck`/`p_mosi`/`p_cs`/`p_dc`/`p_rst`/`p_busy`）/`sleep_s`/**`timeout_action`**/**`line_v`**/`wake_s`/**`wake_show`**/**`pll`**/**`r_mode`**/**`r_url`**/**`r_user`**/**`r_pass`**；热点与远程密码均为「缺省 = 保持，空串 = 清除」，见 §7） |
+| POST | `/api/frame` | 传图（§1 帧格式）。query：`save=1` 存轮播槽并显示、`save=1&noshow=1` 只存不显示、**`save=remote` 存到远程（R1.4.0，不占本地槽、不刷屏）**、`tlen=N` 随帧携带缩略（§1.1）。无 `save` = 只显示不存 |
 | GET | **`/api/net`** | 联网状态 JSON（R1.3.5）：`{on,napt_on,napt,connected,ssid,ip,rssi,trying,count,list[{ssid,has_pass}]}`。**不回传密码**；`list` 顺序即尝试优先级 |
 | POST | **`/api/net`** | 上游 WiFi 管理（R1.3.5）：`action=add&ssid=..&pass=..`（同名更新密码并置顶）/ `action=del&idx=N` / `action=clear`；不带 `action` 时按 `on=0|1`、`napt=0|1` 改开关。详见 §6.3 |
 | GET | **`/api/scan`** | 扫描附近 WiFi（R1.3.5，配网用）：`{n, list[{ssid,rssi,lock}]}`，按 RSSI 降序、同 SSID 去重、已排除本机热点。**阻塞 1~2 s**，只能手动触发。详见 §6.3.4 |
+| GET | **`/api/remote`** | 远程图槽状态（R1.4.0）：`{mode,url,count,slot,busy,err,online}`，见 §6.4 |
+| POST | **`/api/remote`** | `act=sync` 立即同步一次（起任务、异步刷屏，忙时 409）/ `act=probe` 只读清单并返回 `{count,err}`（未联网最多等 15 s） |
 | POST | `/api/carousel/clear` | 清空轮播：**只清 NVS 元数据、不擦 flash**（`count=0` / `cur=0` / `alive=0`） |
 | GET | `/api/carousel/list` | 图库列表 JSON：`{slots,count,cur,items[{slot,fmt,w,h,len,data}]}`，`data` = 缩略图 base64（`fmt=2` 为彩色 JPEG，`fmt=1` 为 2bit 帧） |
 | GET | `/api/carousel/full?slot=N` | 整帧二进制（16B 头 + 2bpp 载荷），供网页大图预览；流式读 flash 分块发送 |
@@ -312,7 +358,7 @@ GPIO 唤醒阈值固定 ≈1.8 V 不可配）。
 | 判据 | 依据 | 分流结果 |
 |---|---|---|
 | 首字节 == `0xE9` | ESP32 镜像魔数 | **固件**：预读首块 → 写另一 OTA 槽 → 校验 → 切槽 → 清页面热更标记 → 重置设置 → 重启 |
-| 前 1024 字节（按 ASCII 小写）含 `<!doctype` 或 `<html` | HTML 文档开头 | **控制页**：收全量 → CRC32 校验 → 擦写 web 分区 → 提取版本 meta → 不重启 |
+| 前 1024 字节（按 ASCII 小写）含 `<!doctype` 或 `<html` | HTML 文档开头 | **控制页**（★ R1.4.0 起不再对外提供，仅兼容旧包）：收全量 → CRC32 校验 → 擦写 web 分区 → 提取版本 meta → 不重启 |
 | 其它 | — | `400 unrecognized payload`，**判定前不擦写任何分区** |
 
 - **不用** `Content-Type`（控制页为规避跨源预检，一律把文件包成 `text/plain` 的 Blob）
@@ -338,6 +384,13 @@ GPIO 唤醒阈值固定 ≈1.8 V 不可配）。
   这是 FB-020 里删除体验混乱的直接原因。
 - 前端约定：收到 `400` / `404` 一律**立即重拉 `/api/carousel/list`** 让索引回正；
   `503` 可原样重试一次（R1.3.4 起删除是毫秒级，重试不会造成长阻塞）。
+
+> **非枚举状态码（R1.4.0 编译修复，ESP-IDF 6.1）**：`httpd_resp_send_err()` 的
+> 第二参是 `httpd_err_code_t` 枚举，内部是 switch；6.1 的枚举**没有 409 / 507**，
+> 直接传数字会落到 `default` 变成 `500`。因此这两处一律用
+> `httpd_resp_set_status()` 显式设状态行再 `httpd_resp_send()`：
+> `/api/remote act=sync` 忙时 `409 Conflict`、轮播满 8 张 `507 Insufficient Storage`。
+> 页面 `40-upload.js` 依赖 `status === 507` 提示「轮播已满 8 张」，不可改号。
 
 #### 6.2.2 `/api/info` 的 `bat_mv`
 
@@ -442,6 +495,48 @@ GPIO 唤醒阈值固定 ≈1.8 V 不可配）。
 - 内存：驱动返回的 `wifi_ap_record_t` 约 112 B/条，最多取 32 条 ⇒ 约 3.6 KB 临时堆，
   扫完立刻 `free()` + `esp_wifi_clear_ap_list()`；不占静态 RAM，也不放 httpd 的 4 KB 栈。
 
+### 6.4 远程图槽（R1.4.0）
+
+定时唤醒 / 双击按键时，可以不走本地 8 槽，直接从 HTTP 目录拉一张 `.bin` 刷屏 ——
+**只写帧缓冲，不碰 store 分区（零 flash 写）**。
+
+**两种模式**（`r_mode`）：`0` 关闭（默认）/ `1` 单张（`r_url` 指向 `.bin`）/
+`2` 清单（`r_url` 指向目录，读其中的 `moink.mf`）。
+
+> **状态：未测试**。控制页已标注「没有进行测试，请自行测试」。
+
+**部署门槛**：**读**只需要任意静态 HTTP 地址（nginx / 对象存储 / GitHub 直链），
+不需要架服务；**写**（「存到远程」）用的是标准 **HTTP PUT + Basic 认证**，
+任何接受 PUT 的服务都能收（WebDAV、群晖、坚果云、Nextcloud、自建脚本均可），
+并不限于 WebDAV；纯静态目录收不了 PUT。
+
+**清单格式**（纯文本，≤ 4 KB）：
+
+```
+MOINKMF1
+0001.bin 1a2b3c4d
+0002.bin 89abcdef
+```
+
+- 第一行必须是 `MOINKMF1`；之后每行「文件名 [CRC32]」。
+- CRC32 是**载荷**（不含 16 B 帧头）的 zlib CRC32，可省略；省略则不去重，每次都重刷。
+- 设备不读 `count` / `cur`，条数自己数；序号进度存 NVS（`r_slot` / `r_crc`）。
+- 只有「清单仅 1 张且 CRC32 与上次相同」时才跳过下载与刷屏（避免无意义整屏刷新）。
+
+**失败语义（与 `carousel_next` 一致）**：下载 / 校验 / 刷屏任一失败就把 `r_slot` 留原地，
+由调用方回退本地轮播 —— **绝不白屏，也绝不跳过一张**。
+
+**校验链**：文件长度 = `16 + len` → 魔数 `A5 5A` → 几何 `epd_frame_geom_ok()` →
+载荷 CRC16（帧头字段）→ （清单模式）载荷 CRC32。
+
+**上传（`save=remote`）**：把帧头 + 载荷分两段 PUT 成 `u_<8位随机hex>.bin`，
+再 `GET moink.mf` → 末尾追加一行 → `PUT` 回去。要求服务端支持 PUT（WebDAV 类）；
+普通静态目录只能读。清单超 4 KB 即拒绝（`NF_ERR_MEM`）。
+
+**已知副作用**：下载全程持帧缓冲锁（最长 30 s），期间 `POST /api/frame` 会 5 s 超时返回
+`busy`；远程同步与手动上传本来就不该并发。
+**v1 不支持 TLS**：只接受 `http://`。
+
 ## 7. 设置与 NVS
 
 - 命名空间 `moink`；键 `panel` / `hflip` / `wifi_pwr` / `sleep_s` / `wake_s` /
@@ -452,6 +547,11 @@ GPIO 唤醒阈值固定 ≈1.8 V 不可配）。
 - **联网相关键（R1.3.5）**：`net_on`（联网开关）/ `napt_on`（转发开关）/
   `wn`（已保存网络数 0..8）/ `wifi_last`（上次成功的下标，`0xFF` = 无记录）/
   **`wlist`**（blob，`SETT_WIFI_MAX(8) × (33+65) = 784 B` 的定长数组；`wn=0` 时该键被删除）。
+- **远程图槽键（R1.4.0）**：`r_mode`（0 关 / 1 单张 / 2 清单）/
+  `r_url`（≤192 B）/ `r_user` / `r_pass`（Basic 认证）/
+  `r_slot`（上次显示的清单序号，`0xFF` = 无记录）/ `r_crc`（上次载荷 CRC32）。
+  老设备没有这些键 → 全部落在默认值（关闭），**升级后行为与 R1.3.6 完全一致**。
+  （`exp_pll` 键已在 2026-11-16 加入废弃清单，升级时顺手清掉。）
   ⚠️ 老设备没有这些键 → `net_on=0`，**升级后行为与 R1.3.4 完全一致**，不会自己去连 WiFi。
 - **固件升级不重置设置**（R1.2.2 起）：OTA 校验通过、切槽之后调用
   `settings_reset_for_upgrade()`，它**只清理本版已废弃的键**（`a1_mode` / `a11_var`），
@@ -488,12 +588,16 @@ GPIO 唤醒阈值固定 ≈1.8 V 不可配）。
 ## 8. 版本号与升级流程（R1.2.0 起）
 
 - **单一版本号**：固件与控制页**共用** `MOINK_VERSION` 一个号（不再有 fw / page 两套）。
-  运行时 `/api/info` 的 `ver` = **当前生效的控制页版本** —— 热更页在用时取它的
-  `<meta name="moink-page-version">`，否则等于 `MOINK_VERSION`。因此恒有 `ver ≥ fw`。
-  `fw` 字段保留一版，**仅供**前端判断「热更控制页是否落后于固件」（落后时状态栏红字警示）。
-- **升级统一走 `POST /api/upload`**（§6.1）：用户只上传一个文件，固件按内容分流。
-  固件升级会**顺带更新控制页**（清除页面热更标记，回到新固件的内嵌页），但**不再重置任何
-  用户设置**（R1.2.2 起只清理已废弃的键，见 §7）；控制页升级只换页面、不重启。
+  **★ R1.4.0 起控制页不再单独发布**（FB-027）：`POST /api/upload` 只接受固件镜像（`.bin`），
+  控制页随固件一起更新，因此 `/api/info` 的 `ver` 与 `fw` **恒相等**。
+  页面上「清除旧控制页」按钮保留，用于清掉以前热更过、与固件不匹配的旧页面。
+- **升级统一走 `POST /api/upload`**（§6.1）：用户只上传一个固件文件。
+  固件升级会**顺带更新控制页**（回到新固件的内嵌页），但**不再重置任何
+  用户设置**（R1.2.2 起只清理已废弃的键，见 §7）。
+- 固件侧仍保留 html 分流分支与 `page_ver` 标记，**仅为向后兼容** —— 老设备里存着的热更页
+  不至于把固件升坏，判定逻辑与 R1.3.x 完全一致；web 分区也继续保留供该兼容路径使用。
+- **发布件**：从 R1.4.0 起只有三件 —— `MoInk-FlashKit-<tag>.zip`（内含固件两包 + 刷机脚本 +
+  说明书，**不再含 page-*.html**）、`moink_<tag>_merged.bin`、`moink_<tag>_app.bin`。
 - **`api`（帧格式契约号）与发布版本号解耦**：只在 §1–§3 帧契约变化时 +1，与 `version` 无关。
   R1.2.2 删除 800×600 对照档属**收窄接受集合**、帧头格式零变动，故 api 仍为 2。
   R1.3.0 新增的 `save` / `noshow` / `tlen` query 与随帧缩略载荷（§1.1）都是**新增可选路径**，
@@ -518,7 +622,7 @@ GPIO 唤醒阈值固定 ≈1.8 V 不可配）。
 | otadata | data/ota | 0xD000 | 8 KiB | OTA 启动选择（不变） |
 | phy | data/phy | 0xF000 | 4 KiB | 射频校准（不变） |
 | ota_0 / ota_1 | app | 0x10000 / 0x150000 | **1.25 MiB ×2** | 固件双槽（1.5→1.25 MiB） |
-| web | data/spiffs | 0x290000 | **384 KiB** | 控制页热更（960→384 KiB） |
+| web | data/spiffs | 0x290000 | **384 KiB** | 旧控制页热更区（R1.4.0 起不再发布新页面，仅兼容清除） |
 | **store** | data/spiffs | 0x2F0000 | **1,088 KiB** | 轮播帧存储底座（新增） |
 
 - **★★ 升级到 R1.2.0 必须整包线刷（`merged.bin` 含新分区表），不能从旧版本 OTA**：

@@ -11,17 +11,17 @@
  *   captive   DNS 劫持 + OS 探测劫持（连上即弹控制页）
  *   frame     帧接收（16B 头 + CRC16 校验）+ 显示触发
  *   power     电池 ADC / 深睡 / 唤醒源 / 空闲休眠
- *   ota_web   OTA 双槽 + 控制页热更（web 分区）+ 统一升级入口
+ *   ota_web   OTA 双槽升级入口（R1.4.0 起只管固件，页面随固件走）
  *
  * 路由：
- *   GET  /                控制页（web 分区优先，否则内嵌页）
+ *   GET  /                控制页（内嵌 gzip，R1.4.0 起唯一来源）
  *   GET  /api/info        状态（版本 / 接口 / 面板 / 堆 / 电量 / 客户端数 / 联网）
  *   GET/POST /api/settings 读写设置
  *   GET/POST /api/net     上游 WiFi 列表与热点转发状态（R1.3.5）
  *   GET  /api/scan        扫描附近 WiFi（配网用，阻塞 1~2 s）
+ *   GET/POST /api/remote  远程图槽状态 / 立即同步 / 探测清单（R1.4.0）
  *   POST /api/frame       传图
- *   POST /api/upload      ★统一升级入口（自动识别 .bin 固件 / .html 控制页）
- *   POST /api/web/clear   清除已上传控制页，回退内嵌页
+ *   POST /api/upload      ★唯一升级入口（只收 .bin 固件）
  *   POST /api/clear       残影清理
  *   POST /api/reboot      重启设备（GPIO 设置改后由页面调用）
  *   POST /api/factory     恢复出厂
@@ -54,8 +54,10 @@
 #include "power.h"
 #include "ota_web.h"
 #include "store.h"
+#include "net_fetch.h"
 
 #include "index_html.h"     /* 由 tools/make_index_header.py 固化，改页必重跑 */
+#include "diag.h"           /* 临时诊断（MOINK_DIAG），定位完置 0 */
 
 static const char *TAG = "main";
 
@@ -212,23 +214,51 @@ static int read_body(httpd_req_t *req, char *buf, size_t n)
 
 /* ---------------- 控制页 ---------------- */
 
+/* ---- 临时诊断（2026-11-16）---- */
+volatile unsigned g_req_count;
+void diag_req(const char *uri)
+{
+#if MOINK_DIAG
+    g_req_count++;
+    DIAG_E(TAG, "req %s heap=%u", uri, (unsigned)esp_get_free_heap_size());
+#else
+    (void)uri;
+#endif
+}
+
 static esp_err_t page_handler(httpd_req_t *req)
 {
+    diag_req("GET /");
     power_activity();
 
-    if (ota_web_has_page()) return ota_web_stream_page(req);
-
-    /* 页面随固件一起更新，浏览器缓存会让人误判「没生效」——必须禁缓存。
-       热更页那条路径在 ota_web_stream_page() 里同样设了 no-store。 */
+    /* R1.4.0：页面只有内嵌这一份（web 分区已从分区表删除）。
+       浏览器缓存会让人误判「没生效」——必须禁缓存。 */
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_send(req, (const char *)index_html, index_html_len);
+
+    /* 页面以 gzip 内嵌（238 KB -> ~55 KB）。手机浏览器都会发 Accept-Encoding: gzip；
+       真遇到不支持的客户端就明说，别发一堆它解不开的二进制。 */
+    char enc[64];
+    bool gz_ok = false;
+    if (httpd_req_get_hdr_value_str(req, "Accept-Encoding", enc, sizeof(enc)) == ESP_OK)
+        gz_ok = (strstr(enc, "gzip") != NULL);
+    if (!gz_ok) {
+        return httpd_resp_sendstr(req,
+            "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
+            "<p style='font:16px/1.7 -apple-system,sans-serif;padding:28px'>"
+            "此页面需要浏览器支持 gzip 压缩，请用手机自带浏览器或 Chrome / Safari 打开。");
+    }
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    DIAG_E(TAG, "page gz %u B (raw %u)", index_html_gz_len, index_html_raw_len);
+    return httpd_resp_send(req, (const char *)index_html_gz, index_html_gz_len);
 }
+
 
 /* ---------------- /api/info ---------------- */
 
 static esp_err_t info_handler(httpd_req_t *req)
 {
+    diag_req("GET /api/info");
     power_activity();
     const moink_settings_t *s = settings_get();
     char buf[800];
@@ -251,7 +281,7 @@ static esp_err_t info_handler(httpd_req_t *req)
         "\"wake_reason\":\"%s\",\"wake_bits\":%lu,"
         "\"net_on\":%u,\"napt\":%s,\"sta_connected\":%s,"
         "\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\",\"sta_rssi\":%d,\"usb\":%s}",
-        ota_web_page_version(), MOINK_VERSION, MOINK_API_VERSION,
+        MOINK_VERSION, MOINK_VERSION, MOINK_API_VERSION,
         epd_panel_name((epd_panel_t)s->panel), (unsigned)s->gpio_preset,
         (unsigned long)esp_get_free_heap_size(), power_battery_mv(),
         (unsigned long)s->sleep_s, (unsigned long)s->wake_s,
@@ -271,27 +301,42 @@ static esp_err_t info_handler(httpd_req_t *req)
 
 /* ---------------- /api/settings ---------------- */
 
+static void json_esc(const char *in, char *out, size_t n);   /* 定义在下方 */
+
 static esp_err_t settings_get_handler(httpd_req_t *req)
 {
+    diag_req("GET /api/settings");
     power_activity();
     const moink_settings_t *s = settings_get();
-    char buf[640];
 
-    snprintf(buf, sizeof(buf),
+    /* 放 static：R1.4.0 加了 url / 用户名后最长约 500 B，httpd 任务栈只有 4 KB。 */
+    static char buf[1024];
+    char url[SETT_URL_MAX * 2], usr[SETT_USER_MAX * 2];
+    json_esc(s->remote_url, url, sizeof(url));
+    json_esc(s->remote_user, usr, sizeof(usr));
+
+    int off = snprintf(buf, sizeof(buf),
         "{\"panel\":%u,\"hflip\":%u,\"wifi_pwr\":%u,\"gpio_preset\":%u,"
         "\"pins\":[%u,%u,%u,%u,%u,%u,%u,%u],"
         "\"sleep_s\":%lu,\"timeout_action\":%u,\"line_v\":%u,"
         "\"wake_s\":%lu,\"wake_show\":%u,"
-        "\"ssid\":\"%s\",\"pass_set\":%s}",
+        "\"ssid\":\"%s\",\"pass_set\":%s,"
+        "\"r_mode\":%u,\"r_url\":\"%s\",\"r_user\":\"%s\","
+        "\"r_pass_set\":%s,\"r_slot\":%d,\"r_count\":%d}",
         s->panel, s->hflip, s->wifi_pwr, s->gpio_preset,
         s->pins.v[0], s->pins.v[1], s->pins.v[2], s->pins.v[3],
         s->pins.v[4], s->pins.v[5], s->pins.v[6], s->pins.v[7],
         (unsigned long)s->sleep_s, s->timeout_action, s->line_ver,
         (unsigned long)s->wake_s, s->wake_show,
-        s->ap_ssid, s->ap_pass[0] ? "true" : "false");
+        s->ap_ssid, s->ap_pass[0] ? "true" : "false",
+        s->remote_mode, url, usr,
+        s->remote_pass[0] ? "true" : "false",
+        s->remote_slot == 0xFF ? -1 : (int)s->remote_slot,
+        net_fetch_count());
+    if (off > (int)sizeof(buf) - 1) off = (int)sizeof(buf) - 1;
 
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, buf, strlen(buf));
+    return httpd_resp_send(req, buf, (size_t)off);
 }
 
 /* FB-014②：AP 配置延迟应用 —— 先把 200 应答发回给页面，300ms 后再把新配置
@@ -308,6 +353,7 @@ static void ap_apply_timer_cb(void *arg)
 
 static esp_err_t settings_post_handler(httpd_req_t *req)
 {
+    diag_req("POST /api/settings");
     power_activity();
     char body[512];
     read_body(req, body, sizeof(body));
@@ -368,6 +414,28 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     }
     if (kv_get(body, "line_v", v, sizeof(v))) {
         settings_set_line_ver((uint8_t)atoi(v));
+    }
+
+    /* R1.4.0 远程图槽：模式 / 地址 / 认证。
+       r_url 传空串 = 清除；缺省 = 保持。r_pass 空串 = 清除密码。 */
+    char rurl[SETT_URL_MAX];
+    if (kv_get(body, "r_mode", v, sizeof(v))) {
+        if (settings_set_remote_mode((uint8_t)atoi(v)) != ESP_OK)
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad r_mode");
+    }
+    if (kv_get(body, "r_url", rurl, sizeof(rurl))) {
+        if (settings_set_remote_url(rurl) != ESP_OK)
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "url too long");
+    }
+    {
+        char ruser[SETT_USER_MAX], rpass[SETT_RPASS_MAX];
+        bool have_user = kv_get(body, "r_user", ruser, sizeof(ruser));
+        bool have_rpass = kv_get(body, "r_pass", rpass, sizeof(rpass));
+        if (have_user || have_rpass) {
+            if (settings_set_remote_auth(have_user ? ruser : NULL,
+                                         have_rpass ? rpass : NULL) != ESP_OK)
+                return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "auth too long");
+        }
     }
 
     /* 热点凭据（FB-014①）：单字段可改 —— pass 键缺省 = 保持当前密码，
@@ -562,6 +630,68 @@ static esp_err_t scan_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, buf, (size_t)off);
 }
 
+/* ---------------- /api/remote（R1.4.0 远程图槽） ----------------
+ *
+ * GET  {"mode":0|1|2,"url":"..","count":N,"slot":N,"busy":bool,"err":N,"online":bool}
+ * POST act=sync   立即同步一次（起任务，异步刷屏，不阻塞 httpd）
+ *      act=probe  只拉清单，返回 {"count":N,"err":N}；等 STA 最长 15 s
+ *
+ * 只手动触发，不做轮询：同步会刷整屏（2~45 s），轮询等于把设备钉在刷屏里。
+ */
+static esp_err_t remote_get_handler(httpd_req_t *req)
+{
+    power_activity();
+    const moink_settings_t *s = settings_get();
+    static char buf[512];
+    char url[SETT_URL_MAX * 2];
+    json_esc(s->remote_url, url, sizeof(url));
+
+    int off = snprintf(buf, sizeof(buf),
+        "{\"mode\":%u,\"url\":\"%s\",\"count\":%d,\"slot\":%d,"
+        "\"busy\":%s,\"err\":%d,\"online\":%s}",
+        s->remote_mode, url, net_fetch_count(),
+        s->remote_slot == 0xFF ? -1 : (int)s->remote_slot,
+        net_fetch_busy() ? "true" : "false",
+        net_fetch_last_err(), netif_sta_connected() ? "true" : "false");
+    if (off > (int)sizeof(buf) - 1) off = (int)sizeof(buf) - 1;
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, (size_t)off);
+}
+
+static esp_err_t remote_post_handler(httpd_req_t *req)
+{
+    power_activity();
+    char body[256];
+    read_body(req, body, sizeof(body));
+
+    char act[16] = "";
+    kv_get(body, "act", act, sizeof(act));
+
+    if (strcmp(act, "sync") == 0) {
+        int r = net_fetch_sync_async();
+        if (r == NF_ERR_BUSY){
+            /* IDF 6.1 的 httpd_err_code_t 没有 409 项（send_err 是 switch 枚举），
+               显式设状态行才能守住 CONTRACT 的「同步忙时 409」。 */
+            httpd_resp_set_status(req, "409 Conflict");
+            httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+            return httpd_resp_send(req, "busy", HTTPD_RESP_USE_STRLEN);
+        }
+        if (r != 0)
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no mem");
+        return httpd_resp_sendstr(req, "OK SYNC");
+    }
+    if (strcmp(act, "probe") == 0) {
+        int n = net_fetch_probe();
+        static char b[64];
+        int off = snprintf(b, sizeof(b), "{\"count\":%d,\"err\":%d}",
+                          n < 0 ? -1 : n, net_fetch_last_err());
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, b, (size_t)off);
+    }
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad action");
+}
+
 /* ---------------- /api/clear / /api/factory ---------------- */
 
 static esp_err_t clear_handler(httpd_req_t *req)
@@ -586,7 +716,7 @@ static esp_err_t factory_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_sendstr(req, "OK");
     vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
+    power_restart();
     return ESP_OK;
 }
 
@@ -636,6 +766,7 @@ static void b64_send_chunked(httpd_req_t *req, const uint8_t *in, size_t n)
 
 static esp_err_t carousel_list_handler(httpd_req_t *req)
 {
+    diag_req("GET /api/carousel/list");
     power_activity();
     int count = 0, cur = 0;
     store_meta_get(&count, &cur);
@@ -838,6 +969,7 @@ static esp_err_t carousel_full_handler(httpd_req_t *req)
      与 carousel_full_handler 同口径；页面据此提示「这张图已不在」。 */
 static esp_err_t carousel_show_handler(httpd_req_t *req)
 {
+    diag_req("POST /api/carousel/show");
     power_activity();
     char qbuf[40], vs[8];
     if (httpd_req_get_url_query_len(req) <= 0 ||
@@ -871,7 +1003,7 @@ static esp_err_t reboot_handler(httpd_req_t *req)
     httpd_resp_sendstr(req, "OK rebooting");
     ESP_LOGW(TAG, "reboot requested by page");
     vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
+    power_restart();
     return ESP_OK;
 }
 
@@ -896,12 +1028,22 @@ static httpd_handle_t start_server(void)
     cfg.uri_match_fn = httpd_uri_match_wildcard;
     cfg.stack_size = HTTPD_STACK;
     cfg.max_uri_handlers = HTTPD_MAX_URI;
-    /* iOS 会并发发起多条 captive 探测连接；容量与 Espressif 官方 captive portal
-       示例保持一致，避免低上限下探测连接被 LRU 提前清掉。 */
-    cfg.max_open_sockets = 13;
+    /* ★ 容量账：R1.4.0 帧数据改流式后 post-net 堆约 180 KB（改前 71 KB），
+       每条 TCP 连接按 (TCP_SND_BUF + TCP_WND) = 8.6 KB 计（4320 + 4320）。
+       4 条 = 34.6 KB，仍给 WiFi 动态缓冲与任务栈留足余量。
+       iOS 会并发发起多条 captive 探测，所以不能压到 2；也不必放大 ——
+       页面已 gzip 到 67 KB，实测 4 条够用。 */
+    cfg.max_open_sockets = 4;
     cfg.lru_purge_enable = true;
     cfg.recv_wait_timeout = 10;
     cfg.send_wait_timeout = 10;
+    /* ★ 「刷新几次就打不开」的治本项：浏览器每开一次页面会新建 4~6 条连接，
+       每条关闭后还要在 TIME_WAIT 挂 2xMSL，PCB 一旦堆到 LWIP_MAX_ACTIVE_TCP
+       就再也建不了新连接。开长连接复用后，一次加载只建 2~3 条，idle 5 s 到点自关。 */
+    cfg.keep_alive_enable = true;
+    cfg.keep_alive_idle = 5;
+    cfg.keep_alive_interval = 3;
+    cfg.keep_alive_count = 2;
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &cfg) != ESP_OK) {
@@ -917,6 +1059,8 @@ static httpd_handle_t start_server(void)
         { .uri = "/api/net",        .method = HTTP_GET,    .handler = net_get_handler,      .user_ctx = NULL },
         { .uri = "/api/net",        .method = HTTP_POST,   .handler = net_post_handler,     .user_ctx = NULL },
         { .uri = "/api/scan",       .method = HTTP_GET,    .handler = scan_get_handler,     .user_ctx = NULL },
+        { .uri = "/api/remote",     .method = HTTP_GET,    .handler = remote_get_handler,   .user_ctx = NULL },
+        { .uri = "/api/remote",     .method = HTTP_POST,   .handler = remote_post_handler,  .user_ctx = NULL },
         { .uri = "/api/frame",      .method = HTTP_POST,   .handler = frame_upload_handler, .user_ctx = NULL },
         { .uri = "/api/carousel/clear", .method = HTTP_POST, .handler = clear_carousel_handler, .user_ctx = NULL },
         { .uri = "/api/carousel/list",  .method = HTTP_GET,  .handler = carousel_list_handler,  .user_ctx = NULL },
@@ -959,6 +1103,25 @@ static void frame_task(void *arg)
         }
     }
 }
+
+#if MOINK_DIAG
+/* 临时诊断：每 3 秒一行心跳。芯片活着但 httpd 卡住时，这里会继续刷；
+   若心跳也停了，说明是 CPU 侧死了（死循环 / 死锁 / 掉电）。 */
+static void diag_hb_task(void *arg)
+{
+    (void)arg;
+    int64_t t0 = esp_timer_get_time() / 1000;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        DIAG_E(TAG, "[hb] up=%llds heap=%u min=%u blk=%u req=%u pll=%02X",
+               (long long)((esp_timer_get_time() / 1000 - t0) / 1000),
+               (unsigned)esp_get_free_heap_size(),
+               (unsigned)esp_get_minimum_free_heap_size(),
+               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+               (unsigned)g_req_count);
+    }
+}
+#endif
 
 static void idle_monitor_task(void *arg)
 {
@@ -1010,9 +1173,22 @@ static void carousel_show(int slot)
     ESP_LOGI(TAG, "carousel: show slot %d (count %d)", slot, count);
 }
 
-/* 切到下一张。count<=0 时无动作。 */
+/* 切到下一张。count<=0 时无动作。
+   R1.4.0：开了远程图槽就先取远程，取不到一律回退本地 —— 绝不允许「远程失败
+   就什么都不显示」。远程下载全程持帧缓冲锁（5~30 s），期间上传会 5 s 超时
+   返回 busy，这是刻意接受的副作用。 */
 static void carousel_next(void)
 {
+    const moink_settings_t *st = settings_get();
+    if (st->remote_mode != SETT_REMOTE_OFF && st->remote_url[0]) {
+        if (net_fetch_display() == 0) {
+            ESP_LOGI(TAG, "carousel: remote frame shown");
+            return;
+        }
+        ESP_LOGW(TAG, "carousel: remote failed (err %d), fall back to local",
+                 net_fetch_last_err());
+    }
+
     int count = 0, cur = 0;
     store_meta_get(&count, &cur);
     if (count <= 0) return;
@@ -1133,7 +1309,7 @@ static void button_task(void *arg)
                 ESP_LOGW(TAG, "long press %d s: factory reset + reboot", HOLD_RESET_S);
                 settings_factory_reset();
                 vTaskDelay(pdMS_TO_TICKS(300));
-                esp_restart();
+                power_restart();
             }
         } else if (st == ST_WAIT_SECOND) {
             if ((now - t_release) >= pdMS_TO_TICKS(BTN_DOUBLE_MS)) {
@@ -1212,7 +1388,7 @@ void app_main(void)
     }
 
     power_init();       /* 配好按键脚与电池 ADC，按键任务依赖它 */
-    power_usb_monitor_start();   /* R1.3.6：自锁态下每 200 ms 查 USB（新排线内部跳过） */
+    power_usb_monitor_start();   /* 2026-11-17：仅 FPC 老排线建 200 ms USB 轮询 */
 
     /* 按键识别尽早启动（上电后约 0.3 s）：双击的第二击才来得及被采样到。
        本任务只投事件、不刷屏，display_task 就绪前投来的事件先在队列里排着。 */
@@ -1252,8 +1428,13 @@ void app_main(void)
 
     xTaskCreate(frame_task, "frame", 4096, NULL, 5, NULL);
     xTaskCreate(idle_monitor_task, "idle_mon", 3072, NULL, 4, NULL);
+#if MOINK_DIAG
+    xTaskCreate(diag_hb_task, "diag_hb", 3072, NULL, 1, NULL);   /* 临时诊断 */
+#endif
     /* 刷屏任务最后启动：store / epd / frame 全部就绪后才可能消费到切图事件 */
-    xTaskCreate(display_task, "display", 4096, NULL, 4, NULL);
+    /* R1.4.0：display_task 现在可能直接跑远程取图（HTTP 客户端 + 帧校验），
+       4 KB 栈不够，提到 6 KB。 */
+    xTaskCreate(display_task, "display", 6144, NULL, 4, NULL);
 
     /* R1.3.3：定时唤醒后自动切到下一张（默认开启，页面可关）。
        事件先入队，display_task 起来即消费；图库为空时 carousel_next 自行返回。 */

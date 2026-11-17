@@ -1,0 +1,892 @@
+<!-- ══════════════════════════════════════════════════════════════════
+     模块 04 · 浮层
+     这些层必须在主脚本之前：图库模块在顶层就绑定 prevOverlay / prevShow。
+     ══════════════════════════════════════════════════════════════════ -->
+
+<!-- 大图预览（点图槽看大图，可一键上屏） -->
+<div id="prevOverlay">
+  <canvas id="prevCanvas"></canvas>
+  <div class="prevBar">
+    <button id="prevShow">显示到屏幕</button>
+    <button class="mini" id="prevClose">关闭预览</button>
+  </div>
+  <span class="savestate" id="prevmsg"></span>
+</div>
+
+<!-- 处理中遮罩（同步计算前先画出来，见 afterLoadingPaint） -->
+<div id="workLoading" aria-hidden="true">
+  <div class="box" role="status" aria-live="polite">
+    <span class="spin"></span><span id="workLoadingText">正在处理…</span>
+  </div>
+</div>
+
+<!-- 表情输入弹窗：表情格里点「＋」才弹出来，不占面板高度 -->
+<div id="emoPop" role="dialog" aria-modal="true">
+  <div class="box">
+    <div class="ttl">点键盘上的表情键</div>
+    <!-- 默认空白：placeholder 只用文字提示，不放示例表情，
+         否则一打开就像「已经输入了一个」 -->
+    <div class="pbody"><input type="text" id="stkEmoIn" autocomplete="off"
+         inputmode="text" placeholder="这里只收表情符号"></div>
+    <button id="stkEmoOk">添加</button>
+    <button class="cc" id="stkEmoCancel">取消</button>
+  </div>
+</div>
+
+<!-- 图标输入弹窗：图标格里点「＋」才弹出来，只收符号（文字请用「文字」） -->
+<div id="icoPop" role="dialog" aria-modal="true">
+  <div class="box">
+    <div class="ttl">点键盘上的符号键</div>
+    <div class="pbody"><input type="text" id="stkIcoIn" autocomplete="off"
+         inputmode="text" placeholder="这里只收图标符号"></div>
+    <button id="stkIcoOk">添加</button>
+    <button class="cc" id="stkIcoCancel">取消</button>
+  </div>
+</div>
+
+<!-- 长按图槽弹出的操作菜单 -->
+<div id="ctxMenu" role="dialog" aria-modal="true">
+  <div class="box">
+    <div class="ttl" id="ctxTitle">这张图片</div>
+    <button id="ctxView">查看大图</button>
+    <button id="ctxShow">显示到屏幕</button>
+    <button class="del" id="ctxDel">删除这张</button>
+    <button class="cc" id="ctxCancel">取消</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     模块 10 · 创作视图
+     ══════════════════════════════════════════════════════════════════ -->
+<div id="vEdit">
+
+  <!-- 品牌行：标题 + 副标题 + 连接状态 + 设置入口 -->
+  <div id="brand">
+    <div class="bt">
+      <h1>墨印 · MoInk</h1>
+      <div class="sub">把喜欢的瞬间，放在身边</div>
+    </div>
+    <div class="br">
+      <span id="conn">未连接</span>
+      <button class="iconbtn" id="gearBtn" aria-label="设备设置" title="设备设置">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- 模式行：原有分段控件，后续加模式往后添一格 -->
+  <div id="modes">
+    <button class="mode on" data-m="0">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>拍立得
+    </button>
+    <button class="mode" data-m="1">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>便签
+    </button>
+  </div>
+
+  <!-- 画布：整屏主体。data-view 在 show / crop 之间切换 -->
+  <div id="stage" class="empty" data-view="show">
+
+    <!-- 预览：画布是唯一视觉源（文字也画在上面），DOM 层只放手柄 -->
+    <div id="prevWrap">
+      <canvas id="prev" width="552" height="768"></canvas>
+      <div id="objLayer"></div>
+        <!-- 空相纸：铺在相纸上，尺寸随相纸走 -->
+      <div id="emptyCue">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        <b>点击选择图片</b>
+        <span>也可以拖入或粘贴</span>
+      </div>
+
+      <!-- 构图工作区：铺满整张相纸。照片固定不动，能动的只有下面的取景框 -->
+      <div id="cropStage">
+        <img id="cropImg" alt="">
+        <!-- 留白蒙版：只提示「白边会盖住这块」，不吃事件、不改取景框 -->
+        <div id="cropPadMask" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <div id="cropBox">
+          <span class="cbGrid"></span>
+          <i class="cbH" data-h="nw"></i><i class="cbH" data-h="ne"></i>
+          <i class="cbH" data-h="sw"></i><i class="cbH" data-h="se"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- 已选文件信息 -->
+    <div id="filerow">
+      <img id="thumb" alt="">
+      <span id="fname"></span>
+      <label id="refile" for="file">换图</label>
+    </div>
+
+    <!-- 无法唤起相册时的兜底 -->
+    <div id="browserFallback">
+      <div>当前弹出页无法选择照片，请转到系统自带浏览器打开 192.168.4.1 继续。</div>
+      <a id="openBrowser" href="intent://192.168.4.1/#Intent;scheme=http;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;S.browser_fallback_url=http%3A%2F%2F192.168.4.1%2F;end">在系统浏览器中选择照片</a>
+    </div>
+
+    <!-- 常驻状态条：上传结果 / 预览进度随时可见 -->
+    <div id="statusLine" class="hid">
+      <div id="bar"><div id="fill"></div></div>
+      <p id="msg"></p>
+      <span id="stathint"></span>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       模块 12 · 上滑面板
+       四个 pane 常驻 DOM，只切 display；这样二级页签、控件状态不会丢。
+       ════════════════════════════════════════════════════════════════ -->
+  <div id="sheet" data-panel="">
+    <div id="grip"></div>
+
+    <!-- 面板正文：只显示「当前选中的那一项」。
+         结构 = .pane（工具）→ .grp[data-l2]（二级选项）→ .box[data-l3]（三级选项）。
+         选项条由 50-ui.js 按这份 DOM 生成，顺序 = 书写顺序，改版只改这里。 -->
+    <div class="panes">
+
+      <!-- ── 构图：取景 / 照片方向 / 角度微调（选图入口在画布上） ── -->
+      <div class="pane" data-pane="compose">
+        <div class="grp" data-l2="取景">
+          <div class="box" data-l3="铺满" data-act="cropMax"></div>
+          <div class="box" data-l3="居中" data-act="cropCenter"></div>
+        </div>
+
+        <div class="grp" data-l2="照片方向">
+          <div class="box" data-l3="逆时针 90°" data-act="rotL"></div>
+          <div class="box" data-l3="顺时针 90°" data-act="rotR"></div>
+          <div class="box" data-l3="回正" data-act="rotZero"></div>
+        </div>
+
+        <div class="grp" data-l2="角度微调">
+          <div class="box" data-l3="角度">
+            <div class="sl">
+              <label>角度</label>
+              <input type="range" id="rotRange" min="-45" max="45" value="0" step="1">
+              <output id="o-rot">0</output>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 调色：基础 / 高级 / 抖动 / 锐化 / 风格 ── -->
+      <div class="pane" data-pane="color">
+        <!-- 风格：放在最前。强度在上、预设在下；整组只有一个三级项，不出现三级选项行。
+             纯灰度 / 原色直出没有「色彩强度」这个参数，整行滑块连标签一起收起。 -->
+        <div class="grp" data-l2="风格">
+          <div class="box" data-l3="风格">
+            <div class="sl" id="coreRow">
+              <label id="coreLab">色彩强度</label>
+              <input type="range" id="core" min="0" max="100" value="60">
+              <output id="o-core">60</output>
+              <button class="mini rbtn" id="resetAdv">还原</button>
+            </div>
+            <div class="row center" id="presets" style="margin:2px 0 0; flex-wrap:nowrap; overflow-x:auto">
+              <button class="preset on" data-m="natural">自然暖调</button>
+              <button class="preset" data-m="adaptive">全面暖色</button>
+              <button class="preset" data-m="gray">纯灰度</button>
+              <button class="preset" data-m="naive">原色直出</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="grp" data-l2="基础">
+          <div class="box" data-l3="亮度"><div id="ctrls-brightness"></div></div>
+          <div class="box" data-l3="对比度"><div id="ctrls-contrast"></div></div>
+          <div class="box" data-l3="伽马"><div id="ctrls-gamma"></div></div>
+          <div class="box" data-l3="饱和度"><div id="ctrls-saturation"></div></div>
+        </div>
+
+        <div class="grp" data-l2="高级">
+          <div class="box" data-l3="暖色中心"><div id="ctrls-warmCenter"></div></div>
+          <div class="box" data-l3="暖色跨度"><div id="ctrls-warmSpan"></div></div>
+          <div class="box" data-l3="暖色吸引"><div id="ctrls-warmPull"></div></div>
+          <div class="box" data-l3="吸引上限"><div id="ctrls-warmPullCap"></div></div>
+          <div class="box" data-l3="冷色抑制"><div id="ctrls-coolPull"></div></div>
+          <div class="box" data-l3="冷色上限"><div id="ctrls-coolCap"></div></div>
+          <div class="box" data-l3="冷色去饱和"><div id="ctrls-coolDesat"></div></div>
+        </div>
+
+        <div class="grp" data-l2="抖动">
+          <div class="box" data-l3="方式">
+            <div class="row" style="margin:0; gap:8px; flex-wrap:nowrap">
+              <label>抖动</label>
+              <div class="chipRow" id="dmodeRow"></div>
+            </div>
+            <select id="dmode" style="display:none">
+              <option value="fs">Floyd-Steinberg</option>
+              <option value="stucki">Stucki</option>
+              <option value="jarvis">Jarvis</option>
+              <option value="burkes">Burkes</option>
+              <option value="sierra">Sierra Lite</option>
+              <option value="atkinson">Atkinson</option>
+              <option value="bayer">Bayer 8×8</option>
+              <option value="none">无抖动</option>
+            </select>
+            <div class="hint" id="dmodeHint" style="margin:6px 0 0"></div>
+          </div>
+          <div class="box" data-l3="强度"><div id="ctrls-ditherStrength"></div></div>
+          <div class="box" data-l3="色域">
+            <div class="row" style="margin:0; gap:8px; flex-wrap:nowrap">
+              <label>色域</label>
+              <div class="chipRow" id="spaceRow"></div>
+            </div>
+            <select id="space" style="display:none">
+              <option value="std">标准</option>
+              <option value="linear">线性光</option>
+              <option value="srgb">sRGB</option>
+            </select>
+          </div>
+          <div class="box" data-l3="色阶">
+            <div class="row" style="margin:0">
+              <label style="min-width:0"><input type="checkbox" id="levels" checked> 自动色阶</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="grp" data-l2="锐化">
+          <div class="box" data-l3="强度"><div id="ctrls-sharpen"></div></div>
+        </div>
+
+      </div>
+
+      <!-- ── 特效：模板 / 边框 / 文字 / 贴纸 ── -->
+      <div class="pane" data-pane="fx">
+        <!-- 模板 = 边框样式。照片区域与边框全部由代码现场绘制，不引任何图片；
+             边框宽度固定不可调（白边宽度自定义已取消）。 -->
+        <div class="grp" data-l2="模板">
+          <div class="box" data-l3="无" data-act="tplNone">
+            <div class="hint" style="margin:0">不加任何装饰，照片铺满整张纸。</div>
+          </div>
+          <div class="box" data-l3="细边框" data-act="tplLine">
+            <div class="hint" style="margin:0">四周留一圈极细白边，干净利落。</div>
+          </div>
+          <div class="box" data-l3="拍立得" data-act="tplPolaroid">
+            <div class="hint" style="margin:0">上窄下宽的白边，下方留出写字的地方。</div>
+          </div>
+          <div class="box" data-l3="拼图" data-act="tplPuzzle">
+            <div class="hint" style="margin:0">两道错位的白缝，像两张照片拼在一起。</div>
+          </div>
+          <div class="box" data-l3="票据" data-act="tplTicket">
+            <div class="hint" style="margin:0">四角挖圆、上下打孔，像一张电影票。</div>
+          </div>
+          <div class="box" data-l3="胶片" data-act="tplFilm">
+            <div class="hint" style="margin:0">黑底 + 横向齿孔，上方 MOINK、下方日期。</div>
+          </div>
+        </div>
+
+        <div class="grp" data-l2="文字">
+          <div class="box" data-l3="文字">
+            <div class="txtrow">
+              <textarea id="txt" autocomplete="off" placeholder="输入文字"></textarea>
+              <button class="plusb" id="objAdd" aria-label="添加文字" title="添加文字">＋</button>
+            </div>
+          </div>
+
+          <!-- 字体：一行胶囊列出全部可用字体（本机探测到的 + 上传的），右侧「＋」加载字体文件 -->
+          <div class="box" data-l3="字体">
+            <div class="fontRow">
+              <div class="chips" id="tFontRow"></div>
+              <button class="chipup" id="tFontUp" aria-label="上传字体" title="上传字体（只在本页生效）">＋</button>
+            </div>
+            <select id="tFont" style="display:none"></select>
+            <input type="file" id="fontFile" accept=".ttf,.otf,.woff,.woff2,font/*" style="display:none">
+          </div>
+
+          <div class="box" data-l3="描边">
+            <div class="sl">
+              <label>描边</label>
+              <input type="range" id="tStroke" min="0" max="8" value="0">
+              <output id="tStrokeV"></output>
+            </div>
+            <div class="swRow" id="rowStrokeC">
+              <span>描边色</span>
+              <b class="sw" data-v="0" data-c="0" title="黑边" aria-label="黑边"></b>
+              <b class="sw" data-v="1" data-c="1" title="白边" aria-label="白边"></b>
+              <b class="sw" data-v="2" data-c="2" title="黄边" aria-label="黄边"></b>
+              <b class="sw" data-v="3" data-c="3" title="红边" aria-label="红边"></b>
+            </div>
+          </div>
+
+          <div class="box" data-l3="填充">
+            <div class="swRow" id="rowTextC">
+              <span>文字色</span>
+              <b class="sw" data-v="0" data-c="0" title="黑" aria-label="黑"></b>
+              <b class="sw" data-v="1" data-c="1" title="白" aria-label="白"></b>
+              <b class="sw" data-v="2" data-c="2" title="黄" aria-label="黄"></b>
+              <b class="sw" data-v="3" data-c="3" title="红" aria-label="红"></b>
+            </div>
+          </div>
+
+          <div class="box" data-l3="底色">
+            <div class="swRow" id="objBgRow">
+              <span>文字底色</span>
+              <b class="sw" data-v="0" data-c="none" title="无" aria-label="无"></b>
+              <b class="sw" data-v="1" data-c="1" title="白底" aria-label="白底"></b>
+              <b class="sw" data-v="2" data-c="0" title="黑底" aria-label="黑底"></b>
+              <b class="sw" data-v="3" data-c="2" title="黄底" aria-label="黄底"></b>
+              <b class="sw" data-v="4" data-c="3" title="红底" aria-label="红底"></b>
+            </div>
+          </div>
+        </div>
+
+        <!-- 日期：和模板 / 文字 / 贴纸并列的独立控件。
+             点「点阵 / 数码管 / 普通」或任一格式胶囊，**直接就往画布上加一个日期**，
+             没有「添加日期」按钮；已经选中某个日期时，点这些就等于改它的样式 / 格式。
+             三种字形全部由代码画，不占字库体积。 -->
+        <div class="grp" data-l2="日期">
+          <div class="box" data-l3="日期">
+            <div class="row" style="margin:0">
+              <label>样式</label>
+              <div class="chips" id="dateStyleRow"></div>
+              <select id="dateStyle" style="display:none">
+                <option value="dot">点阵</option>
+                <option value="seg">数码管</option>
+                <option value="txt">普通</option>
+              </select>
+            </div>
+            <!-- 格式拆成「日期」「时间」两行，各自单选、互不排斥：
+                 只选日期 / 只选时间 / 两个都选（日期在前，时间跟在后面）都行。
+                 要自己写字就走独立的三级页「自定义」（在「日期」这一页后面）。 -->
+            <div class="row" style="margin:6px 0 0; align-items:flex-start">
+              <label style="padding-top:5px">日期</label>
+              <div class="chips" id="dateFmtRow"></div>
+              <select id="dateFmt" style="display:none">
+                <option value="">无</option>
+                <option value="ymd">2026.11.13</option>
+                <option value="ymd2">2026-11-13</option>
+                <option value="mdy">Nov.13 2026</option>
+              </select>
+            </div>
+            <div class="row" style="margin:6px 0 0; align-items:flex-start">
+              <label style="padding-top:5px">时间</label>
+              <div class="chips" id="dateTimeRow"></div>
+              <select id="dateTime" style="display:none">
+                <option value="">无</option>
+                <option value="s12">AM/PM hh:mm:ss</option>
+                <option value="s24">hh:mm:ss</option>
+                <option value="m12">AM/PM hh:mm</option>
+                <option value="hm">hh:mm</option>
+                <option value="iso">THH:MM:SS±HH:MM</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 自定义：自己写字。回车就是换行（点阵 / 数码管 / 普通三种样式都按行画），
+               对齐只影响多行时各行的左右位置，整块仍以控件中心为原点。 -->
+          <div class="box" data-l3="自定义">
+            <div class="row" style="margin:0; align-items:flex-start">
+              <label style="padding-top:8px">文字</label>
+              <textarea id="dateCustom" rows="2" maxlength="160" autocomplete="off"
+                        placeholder="字母、数字、空格与 . -，回车换行"
+                        style="flex:1 1 auto; min-height:62px; resize:vertical"></textarea>
+            </div>
+            <div class="row" style="margin:8px 0 0">
+              <label>对齐</label>
+              <div class="chips" id="dateAlignRow"></div>
+              <select id="dateAlign" style="display:none">
+                <option value="l">左对齐</option>
+                <option value="c">居中</option>
+                <option value="r">右对齐</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="box" data-l3="描边">
+            <div class="sl">
+              <label>描边</label>
+              <input type="range" id="dStroke" min="0" max="8" value="0">
+              <output id="dStrokeV"></output>
+            </div>
+            <div class="swRow" id="dStrokeCRow">
+              <span>描边色</span>
+              <b class="sw" data-v="0" data-c="0" title="黑边" aria-label="黑边"></b>
+              <b class="sw" data-v="1" data-c="1" title="白边" aria-label="白边"></b>
+              <b class="sw" data-v="2" data-c="2" title="黄边" aria-label="黄边"></b>
+              <b class="sw" data-v="3" data-c="3" title="红边" aria-label="红边"></b>
+            </div>
+          </div>
+
+          <div class="box" data-l3="填充">
+            <div class="swRow" id="dColorRow">
+              <span>文字色</span>
+              <b class="sw" data-v="0" data-c="0" title="黑" aria-label="黑"></b>
+              <b class="sw" data-v="1" data-c="1" title="白" aria-label="白"></b>
+              <b class="sw" data-v="2" data-c="2" title="黄" aria-label="黄"></b>
+              <b class="sw" data-v="3" data-c="3" title="红" aria-label="红"></b>
+            </div>
+          </div>
+
+          <div class="box" data-l3="底色">
+            <div class="swRow" id="dBgRow">
+              <span>文字底色</span>
+              <b class="sw" data-v="0" data-c="none" title="无" aria-label="无"></b>
+              <b class="sw" data-v="1" data-c="1" title="白底" aria-label="白底"></b>
+              <b class="sw" data-v="2" data-c="0" title="黑底" aria-label="黑底"></b>
+              <b class="sw" data-v="3" data-c="2" title="黄底" aria-label="黄底"></b>
+              <b class="sw" data-v="4" data-c="3" title="红底" aria-label="红底"></b>
+            </div>
+          </div>
+        </div>
+
+        <!-- 贴纸：三条来源分开成三级选项 ——
+             图标用字形画，跟四色调色板；表情是系统彩色字体，不选色；上传图片是原色，不选色。 -->
+        <div class="grp" data-l2="贴纸">
+          <div class="box" data-l3="图标">
+            <div class="swRow" id="stkColors">
+              <span>图标颜色</span>
+              <b class="sw" data-v="0" data-c="0" title="黑" aria-label="黑"></b>
+              <b class="sw" data-v="3" data-c="3" title="红" aria-label="红"></b>
+              <b class="sw" data-v="2" data-c="2" title="黄" aria-label="黄"></b>
+              <b class="sw" data-v="1" data-c="1" title="白" aria-label="白"></b>
+            </div>
+            <div class="stkRow" id="stkRow"></div>
+          </div>
+
+          <div class="box" data-l3="表情">
+            <div class="stkRow" id="stkEmo"></div>
+          </div>
+
+          <div class="box" data-l3="上传图片">
+            <div class="btns" style="margin-top:2px">
+              <button class="mini" id="stkUp">选择图片</button>
+            </div>
+            <input type="file" id="stkFile" accept="image/*" style="display:none">
+            <div class="hint" style="margin:6px 0 0">只在本页使用：不上传、不保存。</div>
+          </div>
+        </div>
+
+        <!-- 只在画布上手柄调整的三项：节点留着给手柄实时回写，界面不显示 -->
+        <div class="hconly">
+          <input type="range" id="tSize" min="16" max="220" value="48"><output id="tSizeV"></output>
+          <input type="range" id="tWrap" min="0" max="552" value="0" step="2"><output id="tWrapV">自动</output>
+          <input type="range" id="tRot" min="-180" max="180" value="0"><output id="tRotV"></output>
+        </div>
+      </div>
+
+      <!-- ── 保存：图槽 + 输出动作（这一页没有二 / 三级选项） ── -->
+      <!-- ══ 便签：版式 / 内容 / 配色（顺序 = 先选版式再写内容） ══
+           和拍立得那三个 pane 平级，由 setMode() 按 MODE 显示对应底栏按钮。
+           控件全部复用 .pane>.grp>.box + 胶囊 / 色点 / 滑块那套。 -->
+      <div class="pane" data-pane="nlayout">
+        <div class="grp" data-l2="版式">
+          <div class="box" data-l3="版式">
+            <div class="row" style="margin:0; align-items:flex-start">
+              <label style="padding-top:5px">版式</label>
+              <div class="chips" id="noteLayoutRow"></div>
+              <select id="noteLayout" style="display:none"></select>
+            </div>
+            <div class="hint" style="margin:8px 0 0">六种版式共用同一份内容，换版式不会删掉你写的字。</div>
+          </div>
+        </div>
+        <div class="grp" data-l2="排版">
+          <div class="box" data-l3="栏数" data-only="kanban">
+            <div class="row" style="margin:0"><label>栏数</label>
+              <div class="chips" id="noteColsRow"></div>
+              <select id="noteCols" style="display:none"></select>
+            </div>
+            <div class="hint" style="margin:6px 0 0">仅看板生效：把列头分成 2~4 列。</div>
+          </div>
+          <div class="box" data-l3="密度" data-skip="kanban">
+            <div class="row" style="margin:0"><label>密度</label>
+              <div class="chips" id="noteDensityRow"></div>
+              <select id="noteDensity" style="display:none"></select>
+            </div>
+          </div>
+          <div class="box" data-l3="字号">
+            <div class="sl">
+              <label>字号</label>
+              <input type="range" id="noteScale" min="80" max="140" value="100">
+              <output id="noteScaleV"></output>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane" data-pane="ncontent">
+        <div class="grp" data-l2="正文">
+          <div class="box" data-l3="正文">
+            <div class="row" style="margin:0; align-items:flex-start">
+              <label style="padding-top:8px">内容</label>
+              <textarea id="noteRaw" rows="5" maxlength="1200" autocomplete="off"
+                        placeholder="一行一块，回车换行" style="flex:1 1 auto; min-height:92px"></textarea>
+            </div>
+            <div class="row" style="margin:8px 0 0; align-items:flex-start">
+              <label style="padding-top:5px">插入</label>
+              <div class="chips" id="noteInsertRow"></div>
+              <select id="noteInsert" style="display:none"></select>
+            </div>
+            <div class="hint" id="noteCount" style="margin:8px 0 0">0 个内容块</div>
+          </div>
+        </div>
+        <div class="grp" data-l2="示例">
+          <div class="box" data-l3="示例">
+            <div class="row" style="margin:0; align-items:flex-start">
+              <label style="padding-top:5px">套用</label>
+              <div class="chips" id="notePresetRow"></div>
+              <select id="notePreset" style="display:none"></select>
+            </div>
+            <div class="hint" style="margin:8px 0 0">
+              一行一块：<b>#</b> 标题 · <b>[ ]</b> 待办 · <b>[!]</b> 紧急 · <b>[x]</b> 完成 ·
+              <b>-</b> 笔记 · <b>::</b> 列头 · <b>@</b> 落款。写完直接上传，不用调构图。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane" data-pane="ntheme">
+        <div class="grp" data-l2="主题">
+          <div class="box" data-l3="主题">
+            <div class="row" style="margin:0; align-items:flex-start">
+              <label style="padding-top:5px">主题</label>
+              <div class="chips" id="noteThemeRow"></div>
+              <select id="noteTheme" style="display:none"></select>
+            </div>
+            <div class="hint" id="noteThemeHint" style="margin:8px 0 0"></div>
+          </div>
+        </div>
+        <div class="grp" data-l2="色板">
+          <div class="box" data-l3="纸底" data-tok="bg"></div>
+          <div class="box" data-l3="正文" data-tok="ink"></div>
+          <div class="box" data-l3="分隔" data-tok="rule"></div>
+          <div class="box" data-l3="强调" data-tok="accent"></div>
+          <div class="box" data-l3="警示" data-tok="alert"></div>
+          <div class="box" data-l3="恢复">
+            <div class="row" style="margin:0">
+              <button class="mini" id="noteTokReset">恢复主题默认配色</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane" data-pane="save">
+        <div class="phead">
+          <b>设备里的图片</b><i id="caromsg"></i>
+          <span class="r" id="galRefresh">刷新</span>
+        </div>
+        <div class="galGrid" id="galGrid"></div>
+        <div class="hint" style="margin:0 0 8px">
+          点一下只选中；<b>长按</b>弹出「显示到屏幕 / 删除」。
+        </div>
+
+        <button class="act" id="go">
+          <span class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h8l-1 8 10-12h-8z"/></svg></span>
+          <span class="tx"><b>上传并刷新屏幕</b><i>不占图库槽位，适合临时换图</i></span>
+        </button>
+        <button class="act" id="goOnly">
+          <span class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></span>
+          <span class="tx"><b>只存到图库</b><i>不刷屏，之后在图槽里挑着上屏</i></span>
+        </button>
+        <button class="act" id="goRemote">
+          <span class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6-1.5A4 4 0 0 0 6 19z"/><path d="M12 12v7"/><path d="M9.5 14.5L12 12l2.5 2.5"/></svg></span>
+          <span class="tx"><b>存到远程</b><i id="remoteSub">未配置 · 去设置里填地址</i></span>
+        </button>
+        <button class="act" id="goExport">
+          <span class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg></span>
+          <span class="tx"><b>导出到手机</b><i>存成图片，没连设备也能用</i></span>
+        </button>
+
+        <div class="btns" style="margin-top:8px">
+          <button class="mini" id="carouselClear">清空图库</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 选项条：三级在上、二级在下（贴着底栏）。都由 50-ui.js 按 DOM 生成 -->
+    <div id="l3bar" class="lvl hid"></div>
+    <div id="l2bar" class="lvl hid"></div>
+  </div>
+
+  <!-- ── 底部工具条：3 个编辑工具 + 1 个出口 ── -->
+  <div id="dock">
+    <button class="dk" data-tool="compose" data-mode="0" aria-label="构图">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
+      构图
+    </button>
+    <button class="dk" data-tool="color" data-mode="0" aria-label="调色">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="3.4"/></svg>
+      调色
+    </button>
+    <button class="dk" data-tool="fx" data-mode="0" aria-label="特效">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.1 5.4 5.4 2.1-5.4 2.1L12 18l-2.1-5.4L4.5 10.5l5.4-2.1z"/><path d="M18.5 15.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z"/></svg>
+      特效
+    </button>
+    <!-- 便签态三个工具：先定版式，再写内容，最后调配色 -->
+    <button class="dk" data-tool="nlayout" data-mode="1" aria-label="版式">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M10 3v18M3 12h18"/></svg>
+      版式
+    </button>
+    <button class="dk" data-tool="ncontent" data-mode="1" aria-label="内容">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 10h16M4 15h11M4 20h7"/></svg>
+      内容
+    </button>
+    <button class="dk" data-tool="ntheme" data-mode="1" aria-label="配色">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="3.2"/><circle cx="17" cy="7" r="3.2"/><circle cx="7" cy="17" r="3.2"/><circle cx="17" cy="17" r="3.2"/></svg>
+      配色
+    </button>
+    <button class="dk sav" data-tool="save" aria-label="保存">
+      <span class="badge" id="savBadge" style="display:none">0</span>
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/><path d="M12 3v13"/><path d="M7 8l5-5 5 5"/></svg>
+      保存
+    </button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     模块 20 · 设备视图
+     控件 id 与原版完全一致（60-device / 61-ota 直接绑定），只换外框。
+     ══════════════════════════════════════════════════════════════════ -->
+<div id="vDev">
+  <div class="wrap">
+
+    <div class="head">
+      <button id="backBtn" aria-label="返回创作">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+        <b>创作</b>
+      </button>
+      <h2>设备设置</h2>
+    </div>
+
+    <div class="card">
+      <h3>设备信息</h3>
+      <div class="infoGrid">
+        <div><span>版本</span><b id="i-verD">—</b></div>
+        <div><span>接口</span><b id="i-apiD">—</b></div>
+        <div><span>屏幕</span><b id="i-panel">—</b></div>
+        <div><span>当前热点</span><b id="i-ssid">—</b></div>
+        <div><span>空闲内存</span><b id="i-heap">—</b></div>
+        <div><span>电池</span><b id="i-bat">—</b></div>
+        <div><span>在线设备</span><b id="i-clients">—</b></div>
+        <div><span>本次唤醒</span><b id="i-wake">—</b></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>设备设置</h3>
+
+      <details>
+        <summary>电源管理</summary>
+        <div class="row">
+          <label>超时</label>
+          <select id="sleepSel">
+            <option value="60">1 分钟</option>
+            <option value="180">3 分钟</option>
+            <option value="300">5 分钟</option>
+            <option value="0">不超时</option>
+          </select>
+          <span class="hint" style="margin:0">无操作达到此时长后执行所选动作</span>
+        </div>
+        <div class="row" id="actionRow">
+          <label>超时动作</label>
+          <select id="actionSel">
+            <option value="1">关机（断电）</option>
+            <option value="0">休眠</option>
+          </select>
+        </div>
+        <div class="row" id="lineVerRow" style="display:none">
+          <label>排线版本</label>
+          <span><input type="checkbox" id="lineNew"> 新排线（CH213K 反向阻断，ADC 接 VSYS）</span>
+        </div>
+        <div class="hint" id="lineVerHint" style="display:none">
+          <b>只有确认手上是新版排线才勾选。</b>不勾选时，电池供电下<b>不允许休眠</b>，
+          超时一律按「关机」处理 —— 老排线在休眠期间插 USB，5 V 会倒灌进电池
+          （3~4 A，无 CC/CV），而芯片睡着时没有任何发现手段。<br>
+          勾选后<b>不再做 USB 插入检测</b>：插着线时电池通路保持接通，拔线不掉电。
+        </div>
+        <div id="sleepOpts">
+          <div class="row">
+            <label>自动唤醒</label>
+            <select id="wakeSel">
+              <option value="0">关闭</option>
+              <option value="3600">每 1 小时</option>
+              <option value="43200">每 12 小时</option>
+              <option value="86400">每 1 天</option>
+            </select>
+            <span class="hint" style="margin:0">醒来开热点等人传图（3 分钟）</span>
+          </div>
+          <div class="row">
+            <label>唤醒后切图</label>
+            <span><input type="checkbox" id="wakeShow"> 定时唤醒后自动切到下一张</span>
+          </div>
+        </div>
+        <div class="row">
+          <button class="mini" id="saveSleep">保存电源设置</button>
+          <span class="savestate" id="sleepmsg"></span>
+        </div>
+        <div class="hint">
+          <b>板上没有自锁电路时「关机」会退回休眠</b>；超时设为「不超时」则两个动作都不执行。<br>
+          <b>按键</b>：双击切下一张；单击只唤醒、不切图；长按 20 秒恢复出厂。
+        </div>
+      </details>
+
+      <details>
+        <summary>热点设置</summary>
+        <div class="row">
+          <label>热点名</label>
+          <input type="text" id="apSsid" maxlength="32" placeholder="留空 = MoInk-XXXX" style="flex:1">
+        </div>
+        <div class="row">
+          <label>密码</label>
+          <input type="password" id="apPass" maxlength="64" placeholder="留空 = 开放" style="flex:1">
+        </div>
+        <div class="row" id="apClearRow" style="display:none">
+          <label>清除密码</label>
+          <span><input type="checkbox" id="apClearPw"> 改为开放热点（与上方密码二选一）</span>
+        </div>
+        <div class="row">
+          <label>WiFi 功率</label>
+          <select id="wifiPwrSel">
+            <option value="0">高（18dBm）</option>
+            <option value="1">中（10dBm）</option>
+            <option value="2">低（8.5dBm，默认）</option>
+          </select>
+          <span class="hint" style="margin:0">连不上 / 传输不稳时调高</span>
+        </div>
+        <div class="row">
+          <button class="mini" id="saveAp">保存热点设置</button>
+          <span class="savestate" id="apmsg"></span>
+        </div>
+      </details>
+
+      <details>
+        <summary>联网（上游 WiFi）</summary>
+        <div class="row">
+          <label>联网</label>
+          <span><input type="checkbox" id="netOn"> 设备连接路由器</span>
+        </div>
+        <div class="row">
+          <label>转发</label>
+          <span><input type="checkbox" id="naptOn"> 连本设备热点的设备也能上网</span>
+        </div>
+        <div class="row">
+          <label>状态</label>
+          <span id="netState" class="hint" style="margin:0; flex:1">—</span>
+          <button class="mini" id="netRefresh" style="padding:2px 10px">刷新</button>
+        </div>
+
+        <div class="wifiList" id="wifiList"></div>
+
+        <div class="row">
+          <label>附近</label>
+          <button class="mini" id="wifiScan">扫描附近 WiFi</button>
+          <span class="savestate" id="scanfmsg"></span>
+        </div>
+        <div class="scanList" id="scanList"></div>
+
+        <div class="row">
+          <label>名称</label>
+          <input type="text" id="staSsid" maxlength="32" placeholder="路由器 WiFi 名称" style="flex:1">
+        </div>
+        <div class="row">
+          <label>密码</label>
+          <input type="password" id="staPass" maxlength="64" placeholder="留空 = 开放网络" style="flex:1">
+        </div>
+        <div class="row">
+          <button class="mini" id="wifiAdd">添加并连接</button>
+          <span class="savestate" id="wifimsg"></span>
+        </div>
+        <div class="hint">
+          最多记住 8 个网络。开机 / 唤醒后按「上次连上的优先」依次尝试，任一成功即停；
+          全部失败每 15 秒重试一次。<b>连不上不影响热点传图</b>。
+        </div>
+      </details>
+
+      <details>
+        <summary>远程图槽（实验）</summary>
+        <div class="row">
+          <label>模式</label>
+          <select id="rMode">
+            <option value="0">关闭</option>
+            <option value="1">单张 .bin</option>
+            <option value="2">清单 moink.mf</option>
+          </select>
+        </div>
+        <div class="row"><label>地址</label><input id="rUrl" type="text" placeholder="http://192.168.2.10:5005/moink" style="flex:1"></div>
+        <div class="row"><label>用户名</label><input id="rUser" type="text" placeholder="账号（可空）" style="flex:1"></div>
+        <div class="row"><label>密码</label><input id="rPass" type="password" placeholder="留空 = 保持当前密码" style="flex:1"></div>
+        <div class="row">
+          <button class="mini" id="rSave">保存</button>
+          <button class="mini" id="rSync">立即同步</button>
+          <button class="mini" id="rProbe">探测清单</button>
+        </div>
+        <div class="row"><button class="mini" id="rPush" style="flex:1">把当前画面存到远程</button></div>
+        <span class="savestate" id="rmsg"></span>
+        <div class="hint" id="rState">未启用</div>
+        <div class="hint">
+          <b>没有进行测试，请自行测试。</b><br>
+          <b>单张</b>模式：地址直接填一个 <code>.bin</code> 的完整 URL；<b>清单</b>模式：地址填目录，
+          设备读其中的 <code>moink.mf</code> 逐张轮播（第一行必须是 <code>MOINKMF1</code>，
+          之后每行「文件名 CRC32」，CRC32 可省）。<br>
+          开启后，<b>定时唤醒 / 双击按键</b>会优先取远程；取不到自动回退本地槽，屏幕不会白。<br>
+          <b>读</b>只要一个普通静态地址即可（nginx / 对象存储 / GitHub 直链都行），不用架服务；
+          <b>写</b>（「存到远程」）用的是标准 <b>HTTP PUT + Basic 认证</b>，任何接受 PUT 的服务都能收，
+          不限于 WebDAV（群晖、坚果云、Nextcloud、自建脚本都可以），纯静态目录收不了 PUT。<br>
+          只支持 <code>http://</code>（本版不做 TLS）。地址、账号改完点「保存」才写入设备。
+        </div>
+      </details>
+
+      <details>
+        <summary>屏幕</summary>
+        <div class="row">
+          <label>屏幕</label>
+          <select id="panelSel"><option value="0">A0</option><option value="1">A1</option></select>
+        </div>
+        <div class="row"><label style="min-width:0"><input type="checkbox" id="vrot"> 上下旋转</label></div>
+        <div class="hint">屏幕<b>上下颠倒着安装</b>时勾选：输出时把画面旋转 180°，点一下即生效，不用重启。预览与图库缩略图仍按正向显示。</div>
+        <div class="row"><button class="mini" id="savePanel">保存屏幕设置</button><span class="savestate" id="panelmsg"></span></div>
+        <div class="row">
+          <button class="mini" id="clearBtn">清理残影</button>
+          <span class="hint" style="margin:0">2 次黑白全屏闪刷，约 40~60 秒</span>
+        </div>
+      </details>
+
+      <details>
+        <summary>GPIO</summary>
+        <div class="row">
+          <label>接法</label>
+          <select id="gpioPreset">
+            <option value="0">默认</option>
+            <option value="1">排线</option>
+            <option value="2">整合板</option>
+            <option value="3">自定义</option>
+          </select>
+        </div>
+        <div id="gpioCustom" style="display:none">
+          <div class="hint" style="margin:2px 0 6px">已被其它项占用的 IO 会自动从下拉里去掉。电池 ADC 只能选 GPIO0–4，唤醒键只能选 GPIO0–5。</div>
+          <div class="row"><label>电池 ADC</label><select class="gpin" style="flex:1"></select></div>
+          <div class="row"><label>唤醒键</label><select class="gpin" style="flex:1"></select></div>
+          <div class="row"><label>SCK</label><select class="gpin" style="flex:1"></select></div>
+          <div class="row"><label>MOSI</label><select class="gpin" style="flex:1"></select></div>
+          <div class="row"><label>CS</label><select class="gpin" style="flex:1"></select></div>
+          <div class="row"><label>DC</label><select class="gpin" style="flex:1"></select></div>
+          <div class="row"><label>RST</label><select class="gpin" style="flex:1"></select></div>
+          <div class="row"><label>BUSY</label><select class="gpin" style="flex:1"></select></div>
+        </div>
+        <div class="row">
+          <button class="mini" id="saveGpio">保存</button>
+          <button class="mini" id="saveGpioReboot">保存并重启</button>
+          <span class="savestate" id="gpiomsg"></span>
+        </div>
+        <div class="hint">引脚改动<b>需重启才生效</b>。改错导致屏不亮时，按住唤醒键 20 秒可恢复出厂。</div>
+      </details>
+
+      <details>
+        <summary>更新和恢复</summary>
+      <input type="file" id="upFile" accept=".bin" style="width:100%">
+      <div class="row"><button class="mini" id="upGo">上传并升级</button><span class="savestate" id="upmsg"></span></div>
+      <div class="hint">选 <b>.bin</b> 固件上传：控制页随固件一并更新，设置重置、热点名与密码保留，设备自动重启。</div>
+      <div id="otabar"><div id="bar2"><div id="fill2"></div></div></div>
+      <p id="otamsg" class="hint"></p>
+      <button class="danger" id="factory" style="width:100%;margin-top:12px">恢复出厂设置</button>
+      </details>
+
+    </div>
+
+    <footer id="appFoot">
+      <span>墨印 · MoInk<b id="footVer"></b></span>
+      <a href="https://github.com/atunverse/moink" target="_blank" rel="noopener noreferrer">GitHub · atunverse/moink</a>
+    </footer>
+  </div>
+</div>
+
+<!-- 文件选择：不放进 stage（否则会盖住文字手柄），由 JS 触发 -->
+<input type="file" id="file" accept="image/*" aria-label="选择图片">

@@ -96,6 +96,12 @@ int store_save_frame(const uint8_t *hdr, uint32_t hdr_len,
                      const uint8_t *payload, uint32_t len,
                      const uint8_t *thumb, uint32_t tlen);
 
+/* 同上，但 payload 位于 flash 映射区（R1.4.0 流式：帧不再驻留 RAM）。
+   内部按 4 KB 分块拷到内部 RAM 再写，调用方不需要连续大缓冲。 */
+int store_save_frame_from_flash(const uint8_t *hdr, uint32_t hdr_len,
+                                const uint8_t *payload, uint32_t len,
+                                const uint8_t *thumb, uint32_t tlen);
+
 /*
  * 读出逻辑槽 slot（0..count-1，内部换算物理槽）：填充 buf（前 16 字节为帧头，
  * 其后为载荷）。
@@ -117,7 +123,6 @@ int store_delete_slot(int slot);
  * 成功返回总字节数（=16+tlen）；无缩略 / 魔数不符 / 超上限返回 -1
  * （调用方回退 store_thumb_frame 现算）。cap 必须 >= STORE_THUMB_ENTRY_MAX。
  */
-int store_load_thumb(int slot, uint8_t *out, uint32_t cap);
 
 /*
  * 生成逻辑槽 slot 的缩略小帧（16 字节帧头 + 载荷，4x4 抽稀取众数色，位序与

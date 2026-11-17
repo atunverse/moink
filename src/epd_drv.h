@@ -65,7 +65,6 @@ int epd_init(void);
 
 /* 选择活动屏画像。成功返回 0。 */
 int epd_set_panel(epd_panel_t panel);
-epd_panel_t epd_get_panel(void);
 
 /*
  * ★ A1 驱动策略（R1.2.2 起只有一种，不再可切换）。
@@ -97,14 +96,12 @@ const char *epd_panel_name(epd_panel_t panel);
  * 是为兼容既有调用点，后续版本可一并清理。
  */
 void epd_set_hflip(bool on);
-bool epd_get_hflip(void);
 
 /*
  * 完整显示周期，最多尝试 3 次：
  * reset -> PSR/TRES/上电 -> 写 2bpp 帧 -> 刷新 -> 断电。
  * `frame` 必须为 epd_profile()->buf_len 字节。成功返回 0。
  */
-int epd_display_2bpp(const uint8_t *frame);
 
 /* 同 epd_display_2bpp()，但显式给出本帧几何（当前只接受 768x552）。 */
 int epd_display_2bpp_wh(const uint8_t *frame, uint16_t w, uint16_t h);
@@ -124,5 +121,11 @@ int epd_clear_cycles(int cycles);
 
 /* 发送面板深睡命令（0x07 0xA5）。用完可安全调用。 */
 void epd_panel_deep_sleep(void);
+
+/* R30H（PLL）固定用原厂动态帧率档 0x08：低 3 位 = 帧率档位，
+   bit3 = 动态帧率使能。空闲自动降频最省电；A0 初始化序列不发 0x30，
+   只有 A1 会下发。曾试过 120 Hz 档（0x07 / 0x0F），实测整屏刷新
+   两种档位都是 ~15 s，没有收益，已整体移除（2026-11-16）。 */
+#define EPD_PLL_DYNAMIC  0x08
 
 #endif /* EPD_DRV_H */

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 set(MOINK_SRCS
     "main.c" "epd_drv.c" "settings.c" "netif_ap.c" "captive.c"
-    "ota_web.c" "frame.c" "power.c" "store.c")
+    "ota_web.c" "frame.c" "power.c" "store.c" "net_fetch.c")
 
 idf_component_register(
     SRCS ${MOINK_SRCS}

@@ -117,7 +117,6 @@ static void prepare_geom(uint16_t fw, uint16_t fh)
     ESP_LOGD(TAG, "geom: panel %dx%d", s_out_w, s_out_h);
 }
 
-epd_panel_t epd_get_panel(void) { return s_panel; }
 
 const epd_profile_t *epd_profile(void) { return s_prof; }
 
@@ -130,7 +129,6 @@ void epd_set_hflip(bool on)
     ESP_LOGI(TAG, "horizontal flip = %d", (int)on);
 }
 
-bool epd_get_hflip(void) { return s_hflip; }
 
 /* ---- low level ---- */
 
@@ -223,7 +221,7 @@ static void epd_panel_init_a1(void)
     EPD_C4(0x06, 0x6F, 0x1F, 0x14, 0x14);
     EPD_C4(0x03, 0x00, 0x54, 0x00, 0x44);
     EPD_C2(0x60, 0x02, 0x00);           /* TCON */
-    EPD_C1(0x30, 0x08);                 /* PLL */
+    EPD_C1(0x30, EPD_PLL_DYNAMIC);      /* PLL：原厂动态帧率档，空闲自动降频 */
     EPD_C1(0x50, 0x3F);                 /* VCOM */
 
     int h_active = s_out_h;             /* prepare_geom() 定：A1 恒 600 条栅极 */
@@ -380,7 +378,10 @@ static int epd_refresh(void)
             return -1;
         }
         if (elapsed < 250) {
-            ESP_LOGW(TAG, "A1 BUSY released after only %lld ms, fallback wait",
+            /* 这块屏 0x12 后会「假释放」BUSY，必须补一段固定等待把真实刷新等完。
+               14 s 是实测整屏时长（实测 15 s 左右，留 1 s 余量；宁多勿少 ——
+               提前断电会截断刷新）。 */
+            ESP_LOGW(TAG, "A1 BUSY released after only %lld ms, fallback wait 14000 ms",
                      (long long)elapsed);
             vTaskDelay(pdMS_TO_TICKS(14000));
         } else {
@@ -484,7 +485,6 @@ static int epd_cycle(const uint8_t *frame)
         int64_t t0;
         ESP_LOGI(TAG, "display attempt %d/3 (BUSY=%d)", attempt + 1,
                  gpio_get_level(s_pin_busy));
-
         if (epd_panel_init() != 0) continue;
 
         t0 = now_ms();
@@ -512,10 +512,6 @@ int epd_display_2bpp_wh(const uint8_t *frame, uint16_t w, uint16_t h)
     return epd_cycle(frame);
 }
 
-int epd_display_2bpp(const uint8_t *frame)
-{
-    return epd_display_2bpp_wh(frame, s_prof->w, s_prof->h);
-}
 
 /*
  * 帧几何校验：A0 / A1 都只认各自的 768x552 画像尺寸。
@@ -576,3 +572,4 @@ int epd_clear_cycles(int cycles)
     }
     return 0;
 }
+

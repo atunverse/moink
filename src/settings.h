@@ -21,6 +21,25 @@
 #define SETT_SSID_MAX 33
 #define SETT_PASS_MAX 65
 
+/* ---------------- 远程图槽（R1.4.0） ----------------
+ *
+ * 设备定时唤醒后，可以不走本地 8 槽，而是从 HTTP 目录 / WebDAV 拉一张 .bin
+ * 直接刷屏（零 flash 写）。两种模式：
+ *
+ *   SETT_REMOTE_URL  remote_url 直接指向一个 .bin（最简单）
+ *   SETT_REMOTE_MF   remote_url 指向目录，读其中的 moink.mf 清单逐张轮播
+ *
+ * 只支持 http://（v1 不做 TLS：+80~110 KB flash 与握手 RAM，C3 不划算）。
+ * 上传（页面「存到远程」）要求服务端支持 PUT —— 即 WebDAV 类服务。
+ */
+#define SETT_URL_MAX    193
+#define SETT_USER_MAX   65
+#define SETT_RPASS_MAX  65
+
+#define SETT_REMOTE_OFF 0   /* 关闭（默认，升级后行为与旧固件一致） */
+#define SETT_REMOTE_URL 1   /* 单张 .bin */
+#define SETT_REMOTE_MF  2   /* 目录 + moink.mf 清单 */
+
 /* ---------------- 多 WiFi 记忆（R1.3.5） ----------------
  *
  * 设备最多记住 SETT_WIFI_MAX 个上游 WiFi。唤醒/开机时按
@@ -150,6 +169,16 @@ typedef struct {
     uint8_t     wifi_last;                    /* 上次连上的下标；越界 = 无记录 */
     uint8_t     net_on;                       /* 1 = 允许连上游 WiFi */
     uint8_t     napt_on;                      /* 1 = 热点流量经 STA 转发（NAPT） */
+
+    /* R1.4.0：实验性 120 Hz 刷新（PLL 固定档，勾选即生效，无需重启） */
+
+    /* R1.4.0：远程图槽 */
+    uint8_t     remote_mode;                  /* SETT_REMOTE_OFF / URL / MF */
+    uint8_t     remote_slot;                  /* 上次显示的清单序号；0xFF = 无记录 */
+    uint32_t    remote_crc;                   /* 上次显示的载荷 CRC32；0 = 未知 */
+    char        remote_url[SETT_URL_MAX];
+    char        remote_user[SETT_USER_MAX];
+    char        remote_pass[SETT_RPASS_MAX];
 } moink_settings_t;
 
 void settings_init(void);
@@ -207,6 +236,23 @@ void settings_wifi_mark_ok(int i);
 esp_err_t settings_set_net(uint8_t on);
 esp_err_t settings_set_napt(uint8_t on);
 
+/* ---------------- 实验项与远程图槽（R1.4.0） ---------------- */
+
+/* 实验：120 Hz 高速刷新开关（0 = 驱动默认动态帧率，1 = 固定 120 Hz）。
+ * 调用方负责再调 epd_set_pll() 让寄存器立即生效。 */
+
+/* 远程图槽模式（SETT_REMOTE_OFF / URL / MF）。 */
+esp_err_t settings_set_remote_mode(uint8_t v);
+
+/* 远程根地址。传 NULL = 保持当前值；空串 = 清除。 */
+esp_err_t settings_set_remote_url(const char *url);
+
+/* 远程认证（Basic）。任一为 NULL = 保持当前值；空串 = 清除。 */
+esp_err_t settings_set_remote_auth(const char *user, const char *pass);
+
+/* 记录「第 slot 张、载荷 CRC32 = crc 已成功显示」，清单模式下据此跳过重复下载。 */
+void settings_remote_mark(uint8_t slot, uint32_t crc);
+
 /* 恢复出厂：擦除整个 NVS 命名空间（含热点凭据与页面热更标记）；调用方负责重启。 */
 void settings_factory_reset(void);
 
@@ -215,7 +261,8 @@ void settings_factory_reset(void);
  *   - 清理：a1_mode（A1 档位已删除）、a11_var（A1.1 诊断变体已删除）等旧版遗留键。
  *   - 保留：panel / hflip / wifi_pwr / gpio_preset + 8 个引脚键 / sleep_s / wake_s /
  *     ap_ssid / ap_pass —— 它们描述硬件与用户偏好，重置会把人挡在门外。
- *   - 页面热更标记（web_len / web_crc / page_ver）由 ota_web_clear() 负责清除。
+ *   - 页面热更标记（web_len / web_crc / page_ver）已随 R1.4.0 取消页面分区一并移除，
+ *     老设备上残留的同名键会在下次「恢复出厂」时被整体擦除。
  * 调用方在固件校验通过、确定要切槽重启之后调用。
  */
 void settings_reset_for_upgrade(void);

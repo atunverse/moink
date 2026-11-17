@@ -257,12 +257,33 @@ static uint16_t st_crc16(const uint8_t *d, size_t n)
     return crc;
 }
 
+/* 写载荷。from_flash=1 时源在 flash 映射区：spi_flash_write 会关 cache，
+   源指针那一刻读不到，必须逐块拷进内部 RAM 再写。 */
+static esp_err_t write_payload(uint32_t flash_off, const uint8_t *src,
+                               uint32_t len, int from_flash)
+{
+    if (!from_flash)
+        return esp_partition_write(s_part, flash_off, src, len);
+
+    static uint8_t blk[4096];
+    for (uint32_t done = 0; done < len; ) {
+        uint32_t n = len - done;
+        if (n > sizeof(blk)) n = sizeof(blk);
+        memcpy(blk, src + done, n);
+        esp_err_t e = esp_partition_write(s_part, flash_off + done, blk, n);
+        if (e != ESP_OK) return e;
+        done += n;
+    }
+    return ESP_OK;
+}
+
 /* 保存一帧：逻辑上追加到末尾（cur 指向新图），物理上优先写末尾之后的空位，
    末尾已满才回填最早的空洞（R1.3.4）。轮播满时拒绝（STORE_ERR_FULL），
    不覆盖已有图。count / cur / alive 一次 NVS commit。 */
-int store_save_frame(const uint8_t *hdr, uint32_t hdr_len,
-                     const uint8_t *payload, uint32_t len,
-                     const uint8_t *thumb, uint32_t tlen)
+static int save_frame_common(const uint8_t *hdr, uint32_t hdr_len,
+                             const uint8_t *payload, uint32_t len,
+                             const uint8_t *thumb, uint32_t tlen,
+                             int payload_from_flash)
 {
     if (!s_part || !s_lock) return -1;
     if (hdr_len != 16) return -1;
@@ -290,7 +311,8 @@ int store_save_frame(const uint8_t *hdr, uint32_t hdr_len,
 
     esp_err_t e = esp_partition_erase_range(s_part, off, STORE_SLOT_SZ);
     if (e == ESP_OK) e = esp_partition_write(s_part, off, hdr, hdr_len);
-    if (e == ESP_OK) e = esp_partition_write(s_part, off + hdr_len, payload, len);
+    if (e == ESP_OK) e = write_payload(off + hdr_len, payload, len,
+                                       payload_from_flash);
     if (e == ESP_OK && thumb_extra)
         e = esp_partition_write(s_part, off + hdr_len + len, thumb,
                                 thumb_extra);    /* 缩略头+缩略载荷整体 */
@@ -318,6 +340,22 @@ int store_save_frame(const uint8_t *hdr, uint32_t hdr_len,
     ESP_LOGI(TAG, "saved frame -> phys slot %d, logical %d (count=%d, alive=0x%02X)",
              slot, ncur, ncnt, (unsigned)nav);
     return ncur;            /* 返回逻辑序号，供调用方日志/显示 */
+}
+
+/* payload 在 RAM（页面 buffer、远程下载缓冲等老路径）。 */
+int store_save_frame(const uint8_t *hdr, uint32_t hdr_len,
+                     const uint8_t *payload, uint32_t len,
+                     const uint8_t *thumb, uint32_t tlen)
+{
+    return save_frame_common(hdr, hdr_len, payload, len, thumb, tlen, 0);
+}
+
+/* payload 在 flash 映射区（R1.4.0 流式：帧不再驻留 RAM）。 */
+int store_save_frame_from_flash(const uint8_t *hdr, uint32_t hdr_len,
+                                const uint8_t *payload, uint32_t len,
+                                const uint8_t *thumb, uint32_t tlen)
+{
+    return save_frame_common(hdr, hdr_len, payload, len, thumb, tlen, 1);
 }
 
 /* 删除逻辑序号 slot：只清 alive 里的一个 bit，不碰 flash、不搬移（R1.3.4）。
@@ -535,47 +573,6 @@ int store_load_slot(int slot, uint8_t *buf, uint32_t cap)
    布局：帧头(16) + 帧载荷(flen) + 缩略头(16) + 缩略载荷(tlen)。
    缩略头[2]：1=2bit 缩略（上限 STORE_THUMB_LEN），2=彩色 JPEG（上限
    STORE_THUMB_JPEG_MAX）。 */
-int store_load_thumb(int slot, uint8_t *out, uint32_t cap)
-{
-    if (!s_part || !s_lock) return -1;
-    if (slot < 0) return -1;
-    if (cap < STORE_THUMB_ENTRY_MAX) return -1;
-
-    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(5000)) != pdTRUE) return -1;
-
-    int phys = st_idx2phys(slot);          /* 逻辑序号 -> 物理槽（R1.3.4） */
-    if (phys < 0) {
-        xSemaphoreGive(s_lock);
-        return -1;
-    }
-    uint32_t off = (uint32_t)phys * STORE_SLOT_SZ;
-    uint8_t fhdr[16], thdr[16];
-    int total = -1;
-    if (esp_partition_read(s_part, off, fhdr, sizeof(fhdr)) == ESP_OK &&
-        fhdr[0] == STORE_MAGIC0 && fhdr[1] == STORE_MAGIC1) {
-        uint32_t flen = ((uint32_t)fhdr[8] << 24) | ((uint32_t)fhdr[9] << 16) |
-                        ((uint32_t)fhdr[10] << 8) | fhdr[11];
-        if (flen && flen <= STORE_FRAME_MAX &&
-            esp_partition_read(s_part, off + 16 + flen, thdr,
-                               sizeof(thdr)) == ESP_OK &&
-            thdr[0] == STORE_MAGIC0 && thdr[1] == STORE_MAGIC1) {
-            uint32_t tlen = ((uint32_t)thdr[8] << 24) | ((uint32_t)thdr[9] << 16) |
-                            ((uint32_t)thdr[10] << 8) | thdr[11];
-            uint32_t lim = (thdr[2] == 2) ? STORE_THUMB_JPEG_MAX
-                                           : STORE_THUMB_LEN;
-            if (tlen && tlen <= lim && 16u + tlen <= cap &&
-                esp_partition_read(s_part, off + 16 + flen + 16, out + 16,
-                                   tlen) == ESP_OK) {
-                memcpy(out, thdr, 16);
-                total = 16 + (int)tlen;
-            }
-        }
-    }
-
-    xSemaphoreGive(s_lock);
-    if (total < 0) ESP_LOGW(TAG, "slot %d no pre-stored thumb", slot);
-    return total;
-}
 
 void store_clear(void)
 {

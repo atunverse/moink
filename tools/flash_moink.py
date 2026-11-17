@@ -14,6 +14,12 @@ flash_moink.py —— 命令行刷机（整包 merged.bin @ 0x0）。
     python tools/flash_moink.py --bin xxx.bin    # 指定镜像
     python tools/flash_moink.py --no-stub        # 走 ROM 加载器（卡死兜底）
     python tools/flash_moink.py --keep           # 不自动拔插提示
+    python tools/flash_moink.py --force          # 跳过整包检查（危险，别用）
+
+★ 本脚本只往 0x0 写「整包」（bootloader@0x0 + 分区表@0x8000 + app@0x10000）。
+  把单纯的 app 镜像（firmware.bin / moink_*_app.bin）按 0x0 写，会覆盖
+  bootloader、分区表和 NVS —— 芯片从此没有可用分区表，表现为「开机一直重启、
+  串口刷 SHA-256 comparison failed」。2026-11-16 实测踩过一次，故加整包检查。
 
 注意：本机 COM4/COM5 是「蓝牙链接上的标准串行」虚拟口，没有 VID，必须跳过。
 """
@@ -57,6 +63,24 @@ def find_merged():
     return hits[-1] if hits else None
 
 
+def looks_merged(path):
+    """整包判据：0x0 是 ESP 镜像魔数、0x8000 是分区表魔数 0xAA50、0x10000 又是镜像魔数。
+
+    单独给 app 镜像时 0x8000 处不是分区表，这里会判否 —— 那种文件只能写到
+    0x10000，写到 0x0 会把 bootloader + 分区表 + NVS 一起盖掉。
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(0x10001)
+    except OSError:
+        return False
+    if len(head) < 0x10001:
+        return False
+    return (head[0:1] == b"\xe9"
+            and head[0x8000:0x8002] == b"\xaa\x50"
+            and head[0x10000:0x10001] == b"\xe9")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true")
@@ -65,6 +89,7 @@ def main():
     ap.add_argument("--baud", type=int, default=460800)
     ap.add_argument("--no-stub", action="store_true")
     ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
     if args.list:
@@ -83,6 +108,14 @@ def main():
     if not binfile or not os.path.exists(binfile):
         print("no merged bin found; run package_bins.py first")
         return 1
+
+    if not args.force and not looks_merged(binfile):
+        print("!! 拒绝烧录：%s 不是整包" % os.path.basename(binfile))
+        print("   整包 = bootloader@0x0 + 分区表@0x8000 + app@0x10000；")
+        print("   把 app 镜像按 0x0 写会覆盖 bootloader/分区表/NVS，设备将无法启动。")
+        print("   先跑：python tools/package_bins.py <tag> 生成 moink_<tag>_merged.bin")
+        print("   确认要强写请加 --force。")
+        return 2
 
     print("flash  : %s" % binfile)
     print("port   : %s @ %d" % (port, args.baud))

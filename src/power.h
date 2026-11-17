@@ -22,7 +22,6 @@ void power_activity(void);
 
 /* 本次是否为定时器唤醒（决定是否套用短窗口）。 */
 void power_set_auto_wake(bool v);
-bool power_auto_wake(void);
 
 /* 当前唤醒原因位图（esp_sleep_get_wakeup_causes()）。 */
 uint32_t power_wakeup_causes(void);
@@ -49,10 +48,10 @@ int power_battery_mv(void);
  * 判据：
  *   冷启动 —— 只认按键：电池到 VSYS 的唯一路径是「按住按键」，USB 上电没人按键
  *             ⇒ 按键已松即判 USB，不自锁。不读电压（不猜板型，未配置时也安全）。
- *   运行中 —— 仅自锁态每 200 ms 采一次，连续 3 次 > 4500 mV 即释放自锁。
- *             USB 开机本就不自锁，不采样。
- *   新排线 —— gpio_preset = 排线 且 line_ver = NEW 时轮询整段跳过：CH213K 已做
- *             反向阻断，而其 ADC 接 VSYS，插线会读到 5 V，轮询反而会误断电池。
+ *   运行中 —— ★ 2026-11-17：只有 FPC 老排线（gpio_preset=排线 且 line_ver=OLD）
+ *             才在自锁态每 200 ms 采一次，连续 3 次 > 4500 mV 即释放自锁；
+ *             其余硬件连定时器都不建（默认档无自锁电路、整合板硬件侧已处理、
+ *             新排线 CH213K 已反向阻断且 ADC 接 VSYS，轮询反而会误断电池）。
  *   复位   —— RTC_DATA_ATTR 记自锁意图，区分冷启动 / 深睡唤醒 / 软复位-WDT-OTA。
  */
 
@@ -65,6 +64,11 @@ bool power_lock_boot(void);
 
 /* 释放自锁（切断电池通路，改由 USB 供电）。可重入。 */
 void power_lock_release(void);
+
+/* ★ 2026-11-17：软重启（替代 esp_restart）。
+   系统复位会把自锁脚输出清零 → 电池供电当场失电。改用「hold 自锁 + 深睡 +
+   定时唤醒」复位，自锁电平由 LP 域跨复位保持。所有主动重启都必须走这里。 */
+void power_restart(void);
 
 /* 当前是否处于自锁（电池供电）状态。 */
 bool power_self_locked(void);

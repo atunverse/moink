@@ -1,0 +1,944 @@
+/* ══════════════════════════════════════════════════════════════════
+   模块 01 · 设计令牌
+   所有颜色/尺寸只在这里定义一次；下面的模块只引用变量，不写死色值。
+   ══════════════════════════════════════════════════════════════════ */
+:root{
+  /* 纸感底色 */
+  --bg:#faf7f2;
+  --card:#fff;
+  --line:#eee6da;
+  --line2:#d9cfbc;
+  --ink:#2b2620;
+  --mut:#8a7f6d;
+  --mut2:#a99a80;
+
+  /* 品牌色：--acc 暖橙 = 动作 / 强调；--acc2 青绿 = 选中 / 确认 */
+  --acc:#e07a3f;
+  --acc-l:#fdf1e7;
+  --acc2:#3f7d6b;
+  --acc2-l:#e7f1ed;
+  --ok:#2e7d4f;
+  --ok-l:#e3f2e8;
+  --err:#c0392b;
+  --err-l:#fbe4e1;
+  --warn:#a5701a;
+  --warn-l:#fdf1dc;
+
+  /* 结构尺寸 */
+  --dock-h:56px;
+  --brand-h:52px;
+  --modes-h:46px;
+  --safe-b:env(safe-area-inset-bottom, 0px);
+  --r:12px;
+  --r-lg:16px;
+  --tap:44px;               /* 最小触控尺寸 */
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 02 · 基础重置
+   ══════════════════════════════════════════════════════════════════ */
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body{
+  margin:0; padding:0;
+  width:100%; height:100%; overflow-x:hidden;
+  overscroll-behavior:none;            /* 防橡皮筋把固定条带跑 */
+  touch-action:pan-x pan-y;
+}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:-apple-system,'PingFang SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif;
+  font-size:15px; line-height:1.55;
+  -webkit-text-size-adjust:100%;
+}
+input,select,textarea,button{ font-family:inherit; font-size:14px; }
+img,canvas,svg{ display:block; max-width:100%; }
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 03 · 通用控件
+   ══════════════════════════════════════════════════════════════════ */
+/* 按钮统一：9px 圆角（和选项胶囊 / 输入框一致），浅色按钮 12.5px。
+   以前按钮 10px、胶囊 8px、锁按钮 9px 三种圆角混在一起，边界看着毛。 */
+button{
+  cursor:pointer; border:none; border-radius:9px;
+  background:var(--acc); color:#fff; font-size:14px; padding:9px 16px;
+}
+button.mini{ background:#f1ece1; color:var(--ink); padding:7px 12px; font-size:12.5px; }
+button.sec{ background:var(--acc2); }
+button.danger{ background:var(--err); }
+button:disabled{ opacity:.45; cursor:default; }
+/* 风格预设以前是「大号浅色按钮 + 墨绿选中」，和三级选项条（.lvl b）放在一起
+   像两个层级。统一成同款：等分、11px、#f7f3ea 底、选中主题橙。 */
+button.preset{
+  flex:1 1 0; min-width:0; padding:6px 4px; font-size:11px; font-weight:500;
+  background:#f7f3ea; color:var(--mut); border:0; border-radius:9px;
+  text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+button.preset.on{ background:var(--acc); color:#fff; }
+button.iconbtn{
+  width:36px; height:36px; padding:0; flex-shrink:0;
+  display:inline-flex; align-items:center; justify-content:center;
+  background:#f1ece1; color:#8a7a5c; border-radius:9px;
+}
+
+input[type=text],input[type=password],input[type=number],select,textarea{
+  border:1px solid var(--line); border-radius:9px;
+  padding:8px 10px; background:#fff; color:var(--ink);
+  min-width:0;
+}
+textarea{ width:100%; min-height:68px; resize:vertical; }
+/* 滑块：统一画成「已选橙色 / 未选浅灰 + 白边圆点」。
+   原生 accent-color 在部分安卓 WebView 上会把未选轨道画成深色，与纸感界面冲突；
+   --p（已选百分比）由 50-ui.js 的 paintRange 维护。 */
+input[type=range]{
+  -webkit-appearance:none; appearance:none;
+  flex:1; min-width:110px; height:24px; background:transparent; cursor:pointer;
+}
+input[type=range]::-webkit-slider-runnable-track{
+  height:4px; border-radius:2px;
+  background:linear-gradient(to right,
+    var(--acc) 0 var(--p,50%), var(--line2) var(--p,50%) 100%);
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none; appearance:none;
+  width:16px; height:16px; margin-top:-6px; border-radius:50%;
+  background:var(--acc); border:2px solid #fff;
+  box-shadow:0 1px 3px rgba(43,38,32,.28);
+}
+input[type=range]::-moz-range-track{ height:4px; border-radius:2px; background:var(--line2); }
+input[type=range]::-moz-range-progress{ height:4px; border-radius:2px; background:var(--acc); }
+input[type=range]::-moz-range-thumb{
+  width:14px; height:14px; border-radius:50%;
+  background:var(--acc); border:2px solid #fff;
+}
+input[type=file]{ font-size:12.5px; color:var(--mut); max-width:100%; }
+input[type=file]::file-selector-button{
+  border:0; border-radius:9px; padding:8px 12px; margin-right:8px;
+  background:#f1ece1; color:var(--ink); font-size:12.5px; font-family:inherit; cursor:pointer;
+}
+input[type=checkbox]{ accent-color:var(--acc); width:16px; height:16px; }
+
+.row{ display:flex; align-items:center; gap:10px; margin:8px 0; flex-wrap:wrap; }
+.row.center{ justify-content:center; }
+.row > label{ font-size:13px; color:var(--mut); min-width:56px; flex-shrink:0; }
+.hint{ font-size:12px; color:var(--mut); margin:6px 0; line-height:1.5; }
+
+/* 就地保存状态徽章：成功/失败都必须看得见（FB-014） */.savestate{
+  display:inline-flex; align-items:center;
+  padding:3px 9px; border-radius:99px;
+  font-size:12.5px; font-weight:700; line-height:1.35;
+}
+.savestate:empty{ display:none; }
+.savestate.busy{ background:#f1ece1; color:var(--mut); }
+.savestate.ok{ background:var(--ok-l); color:var(--ok); }
+.savestate.warn{ background:var(--warn-l); color:var(--warn); }
+.savestate.err{ background:var(--err-l); color:var(--err); }
+
+/* 进度条（上传 / 升级共用） */
+#bar,#bar2{ display:none; height:8px; background:#eee6da; border-radius:99px; overflow:hidden; margin:10px 0; }
+#fill,#fill2{ height:100%; width:0; background:var(--acc); border-radius:99px; transition:width .15s; }
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 10 · 创作页骨架
+   结构：品牌行 / 模式行 / 画布(flex:1) / 底栏(固定) / 上滑面板(浮在底栏之上)
+   ══════════════════════════════════════════════════════════════════ */
+#vEdit{
+  position:relative;
+  width:100%; height:100%; min-width:0;
+  display:flex; flex-direction:column;
+  overflow:hidden;
+}
+
+/* —— 品牌行：标题 + 副标题 + 连接点 + 设置 —— */
+#brand{
+  flex:0 0 auto; height:var(--brand-h);
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:8px 14px 6px;
+}
+#brand .bt{ min-width:0; flex:1 1 auto; }
+#brand h1{
+  margin:0; font-size:21px; font-weight:700; letter-spacing:.6px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+#brand .sub{ font-size:10.5px; color:var(--mut2); margin-top:1px; white-space:nowrap; }
+#brand .br{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
+
+#conn{
+  display:inline-flex; align-items:center; gap:5px;
+  padding:4px 10px; border-radius:99px;
+  font-size:11px; background:#eee6da; color:var(--mut); white-space:nowrap;
+  flex:0 0 auto; max-width:40vw;
+  overflow:hidden; text-overflow:ellipsis;
+}
+#conn::before{ content:""; width:6px; height:6px; border-radius:50%; background:#b4a88f; }
+#conn.ok{ background:var(--ok-l); color:var(--ok); }
+#conn.ok::before{ background:var(--ok); }
+
+/* —— 模式行：拍立得 / 便签（原样分段控件，后续加模式往后添） —— */
+#modes{
+  flex:0 0 auto; height:var(--modes-h);
+  display:flex; gap:8px; padding:2px 14px 10px;
+  justify-content:center;            /* 居中：模式是两个，左侧对齐看着像没做完 */
+  overflow-x:auto; scrollbar-width:none;
+}
+#modes::-webkit-scrollbar{ display:none; }
+#modes .mode{
+  flex:0 0 auto; display:flex; align-items:center; gap:6px;
+  background:#f1ece1; color:var(--mut);
+  padding:0 18px; height:34px; font-size:13.5px; border-radius:11px;
+  white-space:nowrap;
+}
+#modes .mode.on{ background:#fff; color:var(--acc); box-shadow:0 1px 3px rgba(75,55,30,.12); }
+#modes .mode svg{ width:17px; height:17px; }
+
+/* —— 画布：整屏主体，相纸等比居中 —— */
+#stage{
+  position:relative; flex:1 1 auto;
+  min-width:0; min-height:0; overflow:hidden;
+  /* min-width/min-height 必须为 0：否则 flex 项按内容撑开，页面横向溢出 */
+  display:flex; align-items:center; justify-content:center;
+  padding:8px 10px 10px;
+  background:radial-gradient(circle at 50% 32%,#fffdf9 0%,#f4efe4 72%,#efe8db 100%);
+  /* 双指缩放 / 拖动平移由 JS 接管，浏览器不要插一脚（否则整页被放大） */
+  touch-action:none;
+}
+
+/* 相纸容器：尺寸由 JS 按可用区等比算出（保证 552×768 精确缩放） */
+/* 相纸：绝对定位居中。
+   不能用 flex 布局参与尺寸计算 —— 它一旦参与，stage 的 clientWidth 会被
+   canvas 的内容宽度撑大，fitStage 量到的就是「被自己撑开的」尺寸，
+   算出来的宽高又刚好等于内容尺寸，形成死循环（实测自举成 552×768 溢出屏幕）。 */
+#prevWrap{
+  position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%);
+  background:#fff;
+  box-shadow:0 6px 18px rgba(43,38,32,.14);
+  border-radius:2px;
+}
+#prev{
+  display:block; width:100%; height:100%;
+  border-radius:2px; background:#fff;
+}
+/* 文字对象手柄层：与相纸同尺寸，永远对齐画布 */
+#objLayer{
+  position:absolute; left:0; top:0; width:100%; height:100%;
+  pointer-events:none; overflow:hidden;
+}
+
+/* —— 构图工作区：铺在相纸内容区上（位置/尺寸由 fitStage 按留白算出） ——
+   用 visibility 藏而不是 display:none：隐藏时仍要保留布局尺寸，几何计算依赖它。 */
+#cropStage{
+  position:absolute; overflow:hidden; background:#fff;
+  visibility:hidden; pointer-events:none;
+}
+#stage[data-view="crop"] #cropStage{ visibility:visible; pointer-events:auto; }
+/* 裁剪时藏起文件名条：它压在左上角，正好盖住取景框手柄 */
+#stage[data-view="crop"] #filerow{ display:none; }
+#stage[data-view="crop"] #statusLine{ display:none; }   /* 状态条压在照片上会挡取景框 */
+#stage[data-view="crop"] #prev,
+#stage[data-view="crop"] #objLayer,
+#stage[data-view="crop"] #emptyCue{ visibility:hidden; }
+
+/* 照片：固定显示，不缩放不平移（用户要求「素材框固定」）。
+   尺寸由 layoutCrop() 按 contain 算好后写死，这里只管不参与交互。 */
+#cropImg{
+  position:absolute; display:block; pointer-events:none;
+  user-select:none; -webkit-user-drag:none;
+  transform-origin:50% 50%;
+}
+
+/* 留白蒙版：白边在成片上就是「盖住照片四周的一层白」。
+   这里用半透明白 + 内沿细线把这块提前画出来，让用户看得见会挡掉什么；
+   它纯展示 —— pointer-events:none，不改取景框、不改比例。 */
+#cropPadMask{
+  position:absolute; left:0; top:0; width:100%; height:100%;
+  display:none; pointer-events:none; z-index:1;
+}
+#cropPadMask i{
+  position:absolute; display:block;
+  background:rgba(255,255,255,.82);
+  box-shadow:0 0 0 1px rgba(30,24,16,.10) inset;
+}
+
+/* 取景框：构图里唯一能操作的东西。拖动移动，四角拖动改大小。
+   框外压暗读作「这块之外不要」；阴影会被 #cropStage 的 overflow 裁掉，
+   所以即使框转到图外也不会糊到相纸留白上。 */
+#cropBox{
+  position:absolute; box-sizing:border-box; z-index:2;
+  border:1.5px solid rgba(255,255,255,.95);
+  box-shadow:0 0 0 1px rgba(30,24,16,.55), 0 0 0 4000px rgba(24,18,10,.42);
+  cursor:move; touch-action:none;
+}
+/* 九宫格：只在框内画，帮助对齐；不拦事件 */
+.cbGrid{
+  position:absolute; inset:0; pointer-events:none;
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,.42) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,.42) 1px, transparent 1px);
+  background-size:33.333% 33.333%;
+}
+/* 四角手柄：26px 命中区，视觉上是白底圆点，旋转后仍指向框的角 */
+.cbH{
+  position:absolute; width:24px; height:24px; border-radius:50%;
+  background:rgba(255,255,255,.95); border:1.5px solid rgba(30,24,16,.45);
+  box-shadow:0 1px 4px rgba(0,0,0,.28);
+}
+.cbH[data-h="nw"]{ left:-12px;  top:-12px;    cursor:nwse-resize; }
+.cbH[data-h="ne"]{ right:-12px; top:-12px;    cursor:nesw-resize; }
+.cbH[data-h="sw"]{ left:-12px;  bottom:-12px; cursor:nesw-resize; }
+.cbH[data-h="se"]{ right:-12px; bottom:-12px; cursor:nwse-resize; }
+
+/* 空相纸提示：点它 = 选图 */
+#emptyCue{
+  position:absolute; inset:0;
+  display:none; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+  border:1px dashed var(--line2); border-radius:8px;
+  color:var(--mut2); font-size:12px; text-align:center; padding:16px;
+  cursor:pointer; background:rgba(255,255,255,.55);
+}
+#stage.empty #emptyCue{ display:flex; }
+#emptyCue b{ font-size:13px; color:var(--mut); font-weight:600; }
+
+/* 文件选择：放到屏幕外 1px，由 JS 触发 click()。
+   不能用 display:none —— 安卓 WebView 会拒绝唤起相册；
+   也不能铺在画布上 —— 会盖住文字手柄与空相纸提示。 */
+#file{
+  position:fixed; left:0; top:0;
+  width:1px; height:1px; opacity:0;
+  margin:0; padding:0; border:0;
+  z-index:-1; pointer-events:none;
+}
+
+/* 无法唤起相册时的兜底入口 */
+#browserFallback{ display:none; position:absolute; inset:0; z-index:5;
+  flex-direction:column; align-items:center; justify-content:center; gap:10px;
+  background:rgba(255,255,255,.96); padding:18px; text-align:center; font-size:12px; color:var(--mut); }
+#browserFallback.show{ display:flex; }
+#openBrowser{
+  display:block; border-radius:10px; padding:9px 14px;
+  background:var(--acc2); color:#fff; text-decoration:none; font-size:13px;
+}
+
+/* 已选文件缩略（小图 + 文件名 + 换图） */
+#filerow{
+  position:absolute; left:8px; top:8px; z-index:4;
+  display:none; align-items:center; gap:8px; max-width:calc(100% - 16px);
+  background:rgba(255,255,255,.92); border:1px solid var(--line);
+  border-radius:10px; padding:4px 6px;
+  backdrop-filter:blur(4px);
+}
+#filerow.show{ display:flex; }
+#thumb{ width:34px; height:26px; object-fit:cover; border-radius:5px; border:1px solid var(--line); }
+#fname{ font-size:10.5px; color:var(--mut); flex:1; min-width:0;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#refile{ display:inline-block; background:#f1ece1; color:var(--ink); border-radius:7px;
+         padding:4px 8px; font-size:11px; cursor:pointer; white-space:nowrap; flex-shrink:0; }
+
+/* —— 状态条：常驻在画布底部，上传结果/预览状态随时可见 —— */
+/* ★ 宽度按内容收缩（left 定、right 不定）：原先是 left/right 都定，
+   于是一句「预览就绪」也铺成横贯整张相纸的一条浅色带子，看着像块
+   不明色块压在画布上。现在短消息就是一个小胶囊。 */
+#statusLine{
+  position:absolute; left:10px; bottom:6px; z-index:2;
+  display:inline-flex; align-items:center; gap:8px;
+  max-width:calc(100% - 20px);
+  pointer-events:none;
+  /* 相纸几乎顶到画布底，文字直接压在照片上读不清 —— 给它一层纸色磨砂底 */
+  background:rgba(250,247,242,.92);
+  border-radius:10px; padding:3px 9px;
+  backdrop-filter:blur(6px);
+}
+#statusLine.hid{ display:none; }
+#statusLine p{ margin:0; font-size:11.5px; line-height:1.4; flex:0 1 auto; min-width:0; }
+#msg{ color:var(--mut); }
+#msg.ok{ color:var(--ok); }
+#msg.err{ color:var(--err); }
+#stathint{ color:var(--mut2); font-size:11px; text-align:right; }
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 11 · 底部工具条
+   前三项 = 编辑工具（中性灰），第四项「保存」= 出口（实心强调色）
+   ══════════════════════════════════════════════════════════════════ */
+#dock{
+  flex:0 0 auto; position:relative; z-index:20; min-width:0;
+  display:flex; gap:4px;
+  padding:5px 8px calc(5px + var(--safe-b));
+  background:var(--card);
+  border-top:1px solid var(--line);
+  box-shadow:0 -2px 12px rgba(43,38,32,.05);
+}
+.dk{
+  flex:1 1 0; min-width:0; height:var(--dock-h);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+  border:0; background:transparent; color:var(--mut);
+  border-radius:var(--r); font-size:10.5px; position:relative;
+  padding:0;
+}
+.dk svg{ flex-shrink:0; }
+.dk.on{ color:var(--acc); background:var(--acc-l); }
+
+/* 第四格：橙实心，与编辑工具一眼分开；展开时转深色表示"已打开" */
+.dk.sav{ color:#fff; background:var(--acc); box-shadow:0 2px 7px rgba(224,122,63,.35); }
+.dk.sav.on{ color:#fff; background:var(--acc); }
+.dk.sav.open{ background:var(--ink); box-shadow:none; }
+.dk .badge{
+  position:absolute; right:8px; top:2px; min-width:15px; height:15px;
+  border-radius:8px; padding:0 3px;
+  background:var(--acc); color:#fff;
+  font-size:9px; line-height:15px; text-align:center; font-weight:700;
+}
+.dk.sav .badge{ background:#fff; color:var(--acc); right:5px; top:1px; }
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 12 · 上滑面板
+   浮在底栏之上；高度按内容自适应，最大 72%，内部独立滚动
+   ══════════════════════════════════════════════════════════════════ */
+#sheet{
+  position:relative; z-index:15;
+  flex:0 0 auto;                      /* 参与 flex 布局：打开时把画布顶上去 */
+  background:var(--card);
+  border-radius:var(--r-lg) var(--r-lg) 0 0;
+  display:flex; flex-direction:column;
+  height:auto;
+  max-height:0;                       /* 收起 = 高度归零，不占画布 */
+  /* min-height 必须显式归零：flex 子项默认 min-height:auto 会按内容撑开，
+     而自动最小尺寸的优先级高于 max-height —— 结果 max-height:0 根本压不住，
+     面板收起后仍占着高度。表现就是「画布越来越矮、裁剪框越切越小」。 */
+  min-height:0;
+  overflow:hidden;
+  transition:max-height .26s cubic-bezier(.32,.72,0,1);
+  height:0;
+}
+/* 高度**跟着内容走**（内容少就矮，不留白），上限 38%；
+   画布尺寸不受它影响 —— fitStage 用的是固定基准高度（见 50-ui.js），
+   所以面板高矮变化只让画布下方多出一段背景，画面本身纹丝不动。 */
+#sheet.up{
+  height:auto;
+  max-height:38%;
+  border-top:1px solid var(--line);
+  box-shadow:0 -8px 24px rgba(43,38,32,.12);
+}
+/* 保存页要「一眼看全」：图槽 + 四个动作 + 清空图库，不该靠滚动一个个点。
+   把上限抬到「除品牌行/模式行/底栏之外的全部」，画布在这页不是必需（只留一条边）。 */
+#sheet.up[data-panel="save"]{
+  height:auto;
+  max-height:calc(100% - var(--brand-h) - var(--modes-h) - var(--dock-h) - 44px);
+}
+/* 图槽两行定高：按 552:768 比例时 8 张图要 226px 高，动作区被挤进滚动区。
+   缩略图等比 contain（左右留白），不裁不拉伸。 */
+#sheet[data-panel="save"] .galCell{ aspect-ratio:auto; height:76px; }
+#sheet[data-panel="save"] .galCell canvas,
+#sheet[data-panel="save"] .galCell img{ object-fit:contain; background:#fff; }
+#sheet[data-panel="save"] .act{ padding:7px 8px; margin-bottom:4px; }
+
+/* 抓手：视觉仍是那条 38×4 的小杠，但命中区扩成「整宽 × 16px」——
+   4px 高的小条手指根本按不准。touch-action:none 是关键：不加的话浏览器
+   会把「往下拖」当成页面滚动，直接 pointercancel，拖拽逻辑永远走不到。 */
+#grip{
+  flex:0 0 auto; height:16px; margin:1px 0 0; position:relative;
+  touch-action:none; -webkit-user-select:none; user-select:none; cursor:grab;
+}
+#grip::after{
+  content:""; position:absolute; left:50%; top:6px; width:38px; height:4px;
+  margin-left:-19px; border-radius:2px; background:var(--line2);
+}
+#grip:active{ cursor:grabbing; }
+
+/* 面板正文：只有这里滚，选项条固定贴在底栏上方。
+   高度按内容走（不再给 min-height）：只调一个滑块时面板就该是这么高，
+   留一片空白比高度轻微跳动更碍眼。 */
+.panes{
+  flex:1 1 auto; min-height:0;
+  overflow-y:auto; -webkit-overflow-scrolling:touch;
+  padding:2px 0 8px;
+  /* 高度固定以后，控件少的页（模板 / 日期）会在底部留一大片空白。
+     让内容在剩余高度里垂直居中，上下留白均分，看起来是排版而不是「没铺满」。 */
+  display:flex; flex-direction:column;
+}
+.pane{
+  display:none; flex-direction:column;
+  padding:0 12px;
+  flex:1 1 auto;
+}
+#sheet[data-panel="compose"] [data-pane="compose"],
+#sheet[data-panel="color"]   [data-pane="color"],
+#sheet[data-panel="fx"]      [data-pane="fx"],
+#sheet[data-panel="ncontent"] [data-pane="ncontent"],
+#sheet[data-panel="nlayout"]  [data-pane="nlayout"],
+#sheet[data-panel="ntheme"]   [data-pane="ntheme"],
+#sheet[data-panel="save"]    [data-pane="save"]{ display:flex; }
+
+/* 便签面板的胶囊行：flex-basis 用 0，别把左边的标签挤到上一行（日期那几排同理） */
+#noteInsertRow, #notePresetRow, #noteLayoutRow, #noteColsRow,
+#noteDensityRow, #noteThemeRow{ flex:1 1 0; min-width:0; }
+#noteRaw{ min-width:0; }
+
+/* 三级（.box）内容：同一时刻只显示当前选中的那一个 */
+.pane .box{ display:none; flex-direction:column; }
+/* 面板高度固定后，控件少的页会留一大片空白。
+   让「当前组」撑满剩余高度、内容垂直居中 —— 上下留白均分，看着像排版，
+   而不是「下面忘了铺」。box 在 grp 里面，所以 .grp 也得能伸展。 */
+.pane .grp{ display:flex; flex-direction:column; }
+.pane .grp.cur{ flex:1 1 auto; min-height:0; }
+.pane .box.on{ display:flex; flex:1 1 auto; justify-content:center; }
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 12b · 二 / 三级选项条
+   顺序（自下而上）：底栏 → 二级 → 三级 → 内容。
+   二级 = 分组（取景 / 风格 / 模板…），三级 = 组内具体项（铺满 / 亮度…）。
+   只换选中项、不叠页签，所以再多的参数也只占两行。
+   ══════════════════════════════════════════════════════════════════ */
+.lvl{
+  flex:0 0 auto; display:flex; align-items:center; gap:5px;
+  padding:0 10px; overflow-x:auto; overflow-y:hidden;
+  justify-content:center;              /* 选项居中，不靠左缩成一坨 */
+  scrollbar-width:none; -webkit-overflow-scrolling:touch;
+}
+.lvl::-webkit-scrollbar{ display:none; }
+.lvl b{
+  /* 按内容宽度排版：等分（flex:1 1 0）+ ellipsis 会把「高级」这类两字选项
+     压成「高…」。改成「能吃满就吃满、吃不饱就按文字宽度」——
+     放得下就整行铺满，放不下就整条横向滚动，绝不截字。 */
+  flex:1 1 auto; min-width:max-content; font-weight:500; white-space:nowrap;
+  text-align:center;
+  border-radius:9px; cursor:pointer; user-select:none;
+}
+.lvl.hid{ display:none; }
+#l3bar{ padding-top:8px; padding-bottom:8px; }
+#l3bar b{ font-size:11px; padding:6px 2px; color:var(--mut); background:#f7f3ea; }
+#l3bar b.on{ color:#fff; background:var(--acc); }
+#l2bar{
+  padding-top:8px; padding-bottom:calc(8px + var(--safe-b));
+  border-top:1px solid var(--line); background:var(--card);
+}
+#l2bar b{ font-size:12px; padding:7px 2px; color:var(--mut); background:#f1ece1; }
+#l2bar b.on{ color:#fff; background:var(--ink); }
+
+/* 滑块行 */
+.sl{ display:flex; align-items:center; gap:9px; margin:5px 0; flex:0 0 auto; }
+.sl > label{ width:56px; flex-shrink:0; font-size:12px; color:var(--mut); }
+.sl > output{ width:34px; flex-shrink:0; text-align:right; font-size:11.5px; color:var(--mut); }
+
+/* 文字输入行：输入框 + 一个「＋」按钮。
+   ＋ 用 stretch 跟着输入框等高（输入框拉高时它一起长），符号本身靠 flex 居中。 */
+.txtrow{ display:flex; gap:8px; align-items:stretch; }
+.txtrow > textarea,
+.txtrow > input[type=text]{
+  flex:1 1 auto; min-width:0; height:46px; resize:vertical;
+}
+.plusb{
+  flex:0 0 46px; width:46px; height:auto; align-self:stretch;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:9px; border:0; background:var(--acc); color:#fff;
+  font-size:26px; line-height:1; font-weight:300; cursor:pointer; padding:0;
+}
+.plusb:active{ background:#c85f2c; }
+
+/* 只在画布上调整的控件：节点要留（手柄实时回写），界面不显示 */
+.hconly{ display:none; }
+/* 滑块行末尾的小按钮（还原） */
+.sl > .rbtn{ flex:0 0 auto; padding:5px 9px; font-size:11.5px; }
+
+/* 贴纸素材条：图标用字形画（颜色跟四色），表情用系统彩色 emoji */
+.stkRow{
+  display:flex; gap:7px; overflow-x:auto; padding:2px 0 4px;
+  scrollbar-width:none;
+}
+.stkRow::-webkit-scrollbar{ display:none; }
+.stkCell{
+  flex:0 0 auto; width:44px; height:44px;
+  display:flex; align-items:center; justify-content:center;
+  background:#f7f3ea; border-radius:9px;
+  font-size:22px; line-height:1; cursor:pointer; user-select:none;
+}
+.stkCell.emo{ font-size:24px; }
+/* 表情格最前面的「＋」：点开输入框，自己粘贴/打表情 */
+.stkCell.add{ background:var(--acc); color:#fff; font-size:20px; font-weight:300; }
+.stkCell:active{ background:#e8e2d4; }
+.stkCell.add:active{ background:#c85f2c; }
+/* 图标颜色（四色调色板）—— 描边色 / 文字色 / 底色共用同一套色点，
+   标题在左、色点在右，四种颜色固定顺序，任何面板看到的都是同一套样子。 */
+.swRow{ display:flex; align-items:center; gap:8px; margin:2px 0 8px; }
+.swRow > span{ font-size:12px; color:var(--mut); margin-right:2px; flex:0 0 auto; }
+.sw{
+  flex:0 0 auto; width:23px; height:23px; border-radius:50%;
+  background:var(--c); border:1.5px solid rgba(30,24,16,.2); cursor:pointer;
+  position:relative; overflow:hidden;
+}
+.sw.on{ box-shadow:0 0 0 2px #fff, 0 0 0 3.5px var(--acc); }
+/* 四色显示值（只决定「点长什么样」，写进配置的值在 data-v） */
+.sw[data-c="0"]{ --c:#1e1810; }
+.sw[data-c="1"]{ --c:#ffffff; }
+.sw[data-c="2"]{ --c:#e8b62a; }
+.sw[data-c="3"]{ --c:#d0342c; }
+.sw[data-c="none"]{ --c:#ffffff; }
+.sw[data-c="none"]::after{
+  content:""; position:absolute; left:-3px; right:-3px; top:50%; height:1.6px;
+  margin-top:-.8px; background:#c0342c; transform:rotate(-45deg);
+}
+
+/* 胶囊行（抖动方式 / 色域）：选项全部摆在明面上，和字体行同一副样子。
+   select 仍然留着当数据源，只是不显示 —— 逻辑一份，外观一份。 */
+.chipRow{
+  flex:1 1 auto; min-width:0; display:flex; gap:6px;
+  overflow-x:auto; padding:1px 0 2px; scrollbar-width:none;
+}
+.chipRow::-webkit-scrollbar{ display:none; }
+.chipRow span{
+  flex:0 0 auto; font-size:11px; border:1px solid transparent; border-radius:9px;
+  padding:6px 10px; color:var(--mut); background:#f7f3ea; cursor:pointer; white-space:nowrap;
+}
+.chipRow span.on{ border-color:var(--acc); color:#fff; background:var(--acc); }
+
+/* 字体胶囊行：横向滚动，右侧固定一个「＋」加载字体文件 */
+.fontRow{ display:flex; gap:6px; align-items:stretch; }
+.fontRow .chips{
+  flex:1 1 auto; min-width:0; flex-wrap:nowrap; overflow-x:auto; margin:0;
+  scrollbar-width:none; -webkit-overflow-scrolling:touch;
+}
+.fontRow .chips::-webkit-scrollbar{ display:none; }
+.fontRow .chips span{
+  flex:0 0 auto; font-size:12px; padding:8px 12px; border-radius:9px;
+  background:#f7f3ea; border-color:transparent; cursor:pointer;
+}
+.fontRow .chips span.on{ background:var(--acc); border-color:var(--acc); color:#fff; }
+.chipup{
+  flex:0 0 34px; width:34px; border-radius:9px; border:0; background:var(--acc);
+  color:#fff; font-size:19px; line-height:1; font-weight:300;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
+}
+
+/* 面板底部按钮行 */
+.btns{ display:flex; gap:6px; margin-top:10px; flex:0 0 auto; }
+.btns > button{ flex:1; }
+
+/* 选项胶囊。
+   ★ 全站选项只有一套长相：11px / 9px 圆角 / #f7f3ea 底 / 无边框，
+     选中一律橙底白字 —— 和三级选项条（.lvl b）、风格预设（button.preset）完全相同。
+     以前这里选中是「浅橙底 + 橙字」，和下面的三级条摆在一起像两套控件。 */
+.chips{ display:flex; gap:5px; flex-wrap:wrap; margin:4px 0; flex:0 0 auto; }
+.chips span{
+  font-size:11px; border:1px solid transparent; border-radius:9px;
+  padding:6px 10px; color:var(--mut); background:#f7f3ea; cursor:pointer;
+}
+.chips span.on{ border-color:var(--acc); color:#fff; background:var(--acc); }
+/* 日期四排胶囊（样式 / 日期 / 时间 / 对齐）。全部摊开换行，不藏在横滚里。
+   flex-basis 用 0（不是 auto）：auto 会按内容撑宽，把左边的标签挤到上一行。 */
+#dateStyleRow, #dateFmtRow, #dateTimeRow, #dateAlignRow{ flex:1 1 0; min-width:0; }
+#dateFmtRow span, #dateTimeRow span{ white-space:nowrap; }
+
+/* 面板小标题 */
+.phead{ display:flex; align-items:baseline; gap:7px; margin:2px 0 8px; flex:0 0 auto; }
+.phead b{ font-size:13px; font-weight:600; }
+.phead i{ font-style:normal; font-size:11px; color:var(--mut2); }
+.phead .r{ margin-left:auto; font-size:11.5px; color:var(--acc2); }
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 13 · 图槽（「保存」面板上半）
+   JS 生成的结构：.galCell / .galDel / .galEmpty
+   ══════════════════════════════════════════════════════════════════ */
+.galGrid{ display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:0 0 10px; flex:0 0 auto; }
+.galCell{
+  position:relative; background:#f3efe6; border:1px solid var(--line);
+  border-radius:9px; overflow:hidden; aspect-ratio:552/768; cursor:pointer;
+  transition:border-color .15s, box-shadow .15s;
+}
+.galCell canvas{ width:100%; height:100%; image-rendering:pixelated; }
+.galCell img{ width:100%; height:100%; object-fit:cover; }
+/* 正在显示 = 橙色 ✓；被选中 = 青绿描边。两者可叠加，靠颜色区分 */
+.galCell.cur{ border-color:var(--acc); box-shadow:0 0 0 2px var(--acc-l); }
+.galCell.sel{ border-color:var(--acc2); box-shadow:0 0 0 2px var(--acc2-l); }
+.galCell .tick{
+  position:absolute; right:2px; top:2px; width:14px; height:14px;
+  border-radius:7px; background:var(--acc); color:#fff;
+  font-size:9px; line-height:14px; text-align:center;
+}
+.galCell .num{
+  position:absolute; left:0; right:0; bottom:0;
+  font-size:9px; text-align:center; padding:1px 0;
+  background:rgba(255,255,255,.86); color:var(--mut);
+}
+.galDel{
+  position:absolute; top:2px; left:2px; width:16px; height:16px;
+  display:none; align-items:center; justify-content:center;
+  padding:0; margin:0; line-height:1; border:0; border-radius:50%;
+  background:rgba(0,0,0,.55); color:#fff; font-size:11px;
+}
+.galDel:disabled{ opacity:.35; cursor:default; }
+/* 空槽不按相纸比例占位：8 个空槽若都撑到 121px 高，动作按钮就得滚才能看见 */
+.galEmpty{
+  display:flex; align-items:center; justify-content:center;
+  color:#c9c0ad; font-size:10px; border:1px dashed var(--line2);
+  border-radius:8px; min-height:46px; background:#fbf8f2;
+}
+
+/* 输出动作行 */
+.act{
+  display:flex; align-items:center; gap:9px;
+  padding:8px; border-radius:10px; background:#fdfbf7;
+  margin-bottom:5px; flex:0 0 auto;
+  border:1px solid transparent;
+}
+.act:active{ border-color:var(--line2); }
+.act .ic{
+  width:28px; height:28px; flex:0 0 28px; border-radius:8px;
+  display:grid; place-items:center; background:var(--acc-l); color:var(--acc);
+}
+.act .tx{ flex:1; min-width:0; }
+.act .tx b{ display:block; font-size:12px; font-weight:600; }
+.act .tx i{ display:block; font-style:normal; font-size:10px; color:var(--mut2); margin-top:1px; }
+.act[disabled]{ opacity:.45; }
+.rec{ display:inline-block; font-size:9px; color:#fff; background:var(--acc);
+      border-radius:5px; padding:1px 4px; margin-left:4px; vertical-align:1px; }
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 14 · 浮层：遮罩 / 大图预览 / 长按菜单
+   ══════════════════════════════════════════════════════════════════ */
+/* 全屏遮罩（处理中） */
+body.workLocked{ overflow:hidden; touch-action:none; }
+body.workLocked > :not(#workLoading){ pointer-events:none!important; user-select:none; }
+#workLoading{
+  position:fixed; inset:0; z-index:2147483647;
+  display:none; align-items:center; justify-content:center;
+  background:rgba(247,243,234,.9);
+  -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px);
+  pointer-events:none;
+}
+#workLoading.show{ display:flex; pointer-events:auto; }
+#workLoading .box{
+  min-width:180px; max-width:80vw; padding:18px 22px;
+  border:1px solid var(--line); border-radius:14px; background:#fff;
+  box-shadow:0 8px 30px rgba(75,55,30,.16);
+  display:flex; align-items:center; justify-content:center; gap:12px;
+  font-size:14px; font-weight:600;
+}
+#workLoading .spin{
+  width:20px; height:20px; flex:none;
+  border:3px solid #eadfce; border-top-color:var(--acc);
+  border-radius:50%; animation:workSpin .8s linear infinite;
+}
+@keyframes workSpin{ to{ transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce){ #workLoading .spin{ animation:none; } }
+
+/* 大图预览 */
+#prevOverlay{
+  position:fixed; inset:0; z-index:99;
+  background:rgba(0,0,0,.88);
+  display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+  padding:16px;
+}
+#prevCanvas{ max-width:92vw; max-height:74vh; background:#fff; border-radius:4px; }
+.prevBar{ display:flex; gap:10px; align-items:center; }
+
+/* 长按菜单 */
+#ctxMenu{
+  position:fixed; inset:0; z-index:120;
+  display:none; align-items:center; justify-content:center;
+  background:rgba(43,38,32,.42);
+  padding:24px;
+}
+#ctxMenu.show{ display:flex; }
+#ctxMenu .box{
+  width:100%; max-width:280px;
+  background:#fff; border-radius:14px; overflow:hidden;
+  box-shadow:0 14px 34px rgba(0,0,0,.28);
+  animation:ctxIn .16s ease-out;
+}
+@keyframes ctxIn{ from{ transform:scale(.94); opacity:.4; } to{ transform:scale(1); opacity:1; } }
+#ctxMenu .ttl{ font-size:11px; color:var(--mut2); text-align:center; padding:10px 10px 6px; }
+#ctxMenu button{
+  display:block; width:100%; border:0; border-radius:0;
+  background:#fff; color:var(--ink);
+  padding:13px 12px; font-size:14px; text-align:center;
+  border-top:1px solid var(--line);
+}
+#ctxMenu button:active{ background:#faf6ee; }
+#ctxMenu button.del{ color:var(--err); }
+#ctxMenu button.cc{ color:var(--mut); }
+
+/* 表情输入弹窗（与长按菜单同一套外观，只多一个输入框） */
+#emoPop, #icoPop{
+  position:fixed; inset:0; z-index:130;
+  display:none; align-items:center; justify-content:center;
+  background:rgba(43,38,32,.42);
+  padding:24px;
+}
+#emoPop.show, #icoPop.show{ display:flex; }
+#emoPop .box, #icoPop .box{
+  width:100%; max-width:280px;
+  background:#fff; border-radius:14px; overflow:hidden;
+  box-shadow:0 14px 34px rgba(0,0,0,.28);
+  animation:ctxIn .16s ease-out;
+}
+#emoPop .ttl, #icoPop .ttl{ font-size:11px; color:var(--mut2); text-align:center; padding:10px 10px 6px; }
+#emoPop .pbody, #icoPop .pbody{ padding:0 12px 12px; }
+#emoPop .pbody input, #icoPop .pbody input{
+  width:100%; height:46px; border-radius:9px; border:1px solid var(--line);
+  background:#fdfbf7; padding:0 12px; font-size:22px; text-align:center;
+}
+#emoPop button, #icoPop button{
+  display:block; width:100%; border:0; border-radius:0;
+  background:#fff; color:var(--ink);
+  padding:13px 12px; font-size:14px; text-align:center;
+  border-top:1px solid var(--line);
+}
+#emoPop button#stkEmoOk, #icoPop button#stkIcoOk{ color:var(--acc2); font-weight:600; }
+#emoPop button.cc, #icoPop button.cc{ color:var(--mut); }
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 15 · 文字对象手柄
+   ══════════════════════════════════════════════════════════════════ */
+.tobj{
+  position:absolute; pointer-events:auto; cursor:move;
+  white-space:pre-wrap; text-align:center; line-height:1.35;
+  transform-origin:center center; touch-action:none;
+  color:transparent;                    /* 文字本身由画布绘制，DOM 只做手柄框 */
+}
+.tobj.sel{ outline:1.5px dashed var(--acc); outline-offset:2px; }
+.tobj .hnd{
+  position:absolute; width:26px; height:26px; border-radius:50%;
+  background:var(--acc); border:2px solid #fff; box-sizing:border-box;
+  touch-action:none;
+  display:none;                        /* 没选中就不挂手柄：点一下对象才露出来 */
+}
+.tobj.sel .hnd{ display:block; }
+.tobj .h-s{ right:-13px; bottom:-13px; cursor:nwse-resize; }
+.tobj .h-r{ right:-13px; top:-13px; cursor:grab; }
+.tobj .h-w{ left:-13px; bottom:-13px; cursor:ew-resize; }
+/* 日期不提供宽度手柄：换行在「自定义」里按回车，框宽永远是内容实际宽度。
+   选择器比 .tobj.sel .hnd 多一级，不用 !important 也能压住。 */
+.tobj.nowrap .hnd.h-w{ display:none; }
+.tobj .h-del{ left:-13px; top:-13px; cursor:pointer; background:#e5484d; }
+.tobj .hnd::after{
+  font-style:normal; position:absolute; inset:0; color:#fff;
+  font-size:13px; line-height:22px; text-align:center;
+}
+.tobj .h-s::after{ content:"\2198"; }
+.tobj .h-r::after{ content:"\21BB"; font-size:15px; }
+.tobj .h-w::after{ content:"\2194"; }
+.tobj .h-del::after{ content:"\00D7"; font-weight:700; }
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 20 · 设备页（原来的长滚动卡片，改为分组 + 可折叠）
+   ══════════════════════════════════════════════════════════════════ */
+#vDev{
+  display:none; height:100%;
+  overflow-y:auto; -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
+}
+#vDev.show{ display:block; }
+#vDev .wrap{ max-width:640px; margin:0 auto; padding:10px 14px 40px; }
+
+#vDev .head{
+  display:flex; align-items:center; gap:10px;
+  padding:8px 0 4px;
+}
+#vDev .head h2{ margin:0; font-size:16px; font-weight:700; flex:1; }
+#backBtn{
+  display:inline-flex; align-items:center; gap:5px;
+  height:34px; padding:0 12px 0 9px;
+  background:#f1ece1; color:var(--ink); border-radius:9px; font-size:13px;
+}
+#backBtn b{ font-weight:600; }
+
+.card{ background:var(--card); border:1px solid var(--line); border-radius:var(--r-lg);
+       padding:14px; margin:10px 0; }
+.card h3{ margin:0 0 10px; font-size:14px; color:var(--acc); font-weight:600; }
+.card h3 .tag{ font-size:11px; color:var(--mut2); font-weight:400; margin-left:6px; }
+
+.infoGrid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:4px 0; }
+.infoGrid > div{ background:#faf6ee; border-radius:10px; padding:8px 11px; }
+.infoGrid span{ display:block; font-size:11px; color:var(--mut); }
+.infoGrid b{ font-size:13.5px; }
+
+details{ margin:4px 0; border-top:1px solid var(--line); padding-top:8px; }
+details:first-of-type{ border-top:0; padding-top:0; }
+details > summary{
+  cursor:pointer; font-weight:600; font-size:13.5px; color:var(--ink);
+  list-style:none; padding:6px 0; display:flex; align-items:center; gap:6px;
+}
+details > summary::-webkit-details-marker{ display:none; }
+details > summary::before{
+  content:""; width:0; height:0; flex-shrink:0;
+  border-left:5px solid var(--mut2); border-top:4px solid transparent; border-bottom:4px solid transparent;
+  transition:transform .15s;
+}
+details[open] > summary::before{ transform:rotate(90deg); }
+
+/* 上游 WiFi 列表 */
+.wifiList{ display:flex; flex-direction:column; gap:6px; margin:10px 0; }
+.wifiList:empty{ display:none; }
+.wifiItem{
+  display:flex; align-items:center; gap:8px; padding:7px 10px;
+  background:var(--bg); border:1px solid var(--line); border-radius:10px; font-size:13px;
+}
+.wifiItem .n{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wifiItem .tag2{ flex-shrink:0; font-size:11px; color:var(--ok); background:var(--ok-l);
+                 padding:1px 6px; border-radius:99px; }
+.wifiItem .del{ flex-shrink:0; padding:2px 9px; font-size:12px;
+                background:#f3e7e4; color:var(--err); border-radius:8px; }
+
+/* 扫描结果 */
+.scanList{ display:flex; flex-direction:column; gap:5px; margin:8px 0; }
+.scanList:empty{ display:none; }
+.scanItem{
+  display:flex; align-items:center; gap:8px; padding:7px 10px;
+  background:var(--bg); border:1px solid var(--line); border-radius:10px;
+  font-size:13px; cursor:pointer;
+}
+.scanItem:active{ border-color:var(--ok); }
+.scanItem .n{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.scanItem .bar{ flex-shrink:0; font-size:11px; color:var(--mut); }
+.scanItem .lk{ flex-shrink:0; font-size:11px; color:var(--mut); }
+
+/* 页脚 */
+footer#appFoot{
+  display:flex; align-items:center; justify-content:center; gap:14px; flex-wrap:wrap;
+  font-size:11.5px; color:var(--mut2); padding:6px 0 10px;
+}
+footer#appFoot b{ font-weight:400; }
+footer#appFoot a{ color:var(--mut2); text-decoration:none; border-bottom:1px solid var(--line); }
+footer#appFoot a:active{ color:var(--acc); }
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 21 · 宽屏适配
+   桌面端不另起一套布局，只放宽相纸上限、把面板做宽一些。
+   ══════════════════════════════════════════════════════════════════ */
+@media (min-width:900px){
+  #stage{ padding:16px; }
+  #sheet{ left:50%; transform:translate(-50%, calc(100% + 80px)); width:min(760px,92vw); }
+  #sheet.up{ transform:translate(-50%, 0); height:auto; max-height:46%; }
+  #sheet.up[data-panel="save"]{ height:auto; max-height:46%; }
+  #vDev .wrap{ max-width:760px; }
+  .galGrid{ grid-template-columns:repeat(8,1fr); }
+}
+
+/* 窄屏：副标题让位 */
+@media (max-width:380px){
+  #brand .sub{ display:none; }
+  #brand h1{ font-size:15px; }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   模块 22 · 高级滑块（32-style.js 动态生成，类名 .slider 由 JS 决定）
+   label + range + output + 「默认」角标，四个元素挤一行，宽度全部固定，
+   只有 range 伸缩；.dmark 默认隐藏（偏离默认值时由 refreshDefMarks 点亮）。
+   ══════════════════════════════════════════════════════════════════ */
+.slider{ display:flex; align-items:center; gap:7px; margin:7px 0; flex-wrap:nowrap; }
+.slider > label{ width:64px; flex:0 0 64px; font-size:12px; color:var(--mut); }
+.slider > input[type=range]{ flex:1 1 auto; min-width:0; }
+.slider > output{ width:34px; flex:0 0 34px; text-align:right; font-size:11.5px; color:var(--mut); }
+.slider .dmark{
+  flex:0 0 auto; font-size:10px; color:var(--acc2); cursor:pointer;
+  padding:1px 4px; border-radius:5px; background:var(--acc2-l); user-select:none;
+}
+.slider .dmark.off{ visibility:hidden; }
+.slider .dmark:active{ background:#d5e6df; }
+
+/* 保存面板的出口行是 <button>，要压掉按钮的默认外观 */
+button.act{
+  width:100%; border:1px solid transparent; border-radius:10px;
+  background:#fdfbf7; color:var(--ink);
+  padding:8px; font-size:inherit; text-align:left;
+}
+button.act:active{ border-color:var(--line2); }
+button.act[disabled]{ opacity:.45; }

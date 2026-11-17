@@ -15,6 +15,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include <stdio.h>   /* snprintf：冷启动判据的诊断行 */
+
 static const char *TAG = "power";
 
 #define AUTO_WAKE_WINDOW_S 180   /* 定时唤醒后等人的窗口（秒） */
@@ -107,7 +109,6 @@ void power_activity(void)
 }
 
 void power_set_auto_wake(bool v) { s_auto_wake = v; }
-bool power_auto_wake(void) { return s_auto_wake; }
 
 uint32_t power_wakeup_causes(void)
 {
@@ -187,6 +188,33 @@ void power_self_lock_off(void)
     power_enter_deep_sleep();
 }
 
+/* ★ 2026-11-17：软重启绝不能再用 esp_restart()。
+   系统复位会把数字域整体复位，自锁脚 GPIO2 的输出寄存器清零 → MOS 断开 →
+   电池供电的设备当场失电，"重启"变成"关机"，自锁自然也就没了（表现为
+   「网页点应用并重启后设备关机」）。
+   深睡时 pad 电平由 LP 域保持，因此用「锁存自锁电平 + 深睡 + 定时唤醒」模拟
+   一次复位：唤醒后 reset reason = DEEPSLEEP、RTC 内存里的 s_lock_want 完好，
+   power_lock_boot() 走深睡分支，自锁不丢，其余初始化与冷启动完全一致。 */
+void power_restart(void)
+{
+    ESP_LOGW(TAG, "soft restart via deep sleep (self_lock=%d)", s_lock_want);
+
+    /* 其他唤醒源先清掉：按键 GPIO 唤醒若还挂着，理论上不会触发（键没按），
+       但复位语义上应当干净。 */
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+
+    /* 顺序同 power_enter_deep_sleep：先写电平，再 hold。 */
+    gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
+    gpio_set_direction((gpio_num_t)PIN_SELF_LOCK, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)PIN_SELF_LOCK, s_lock_want ? 1 : 0);
+    gpio_hold_en((gpio_num_t)PIN_SELF_LOCK);
+    gpio_deep_sleep_hold_en();
+
+    esp_sleep_enable_timer_wakeup(100ULL * 1000);   /* 100 ms 后醒来 = 重启 */
+    vTaskDelay(pdMS_TO_TICKS(60));                  /* 等日志与 HTTP 应答发完 */
+    esp_deep_sleep_start();
+}
+
 int power_battery_mv(void)
 {
     /* R1.3.4（FB-019）：**一次调用内完成全部采样**。
@@ -230,6 +258,12 @@ int power_battery_mv(void)
 
 void power_lock_gpio_init(void)
 {
+    /* ★ 2026-11-17：运行中软重启（深睡 / OTA / 恢复出厂）时，自锁脚可能正被
+       hold 锁在高电平维持供电。此刻绝不能拉低 —— 电池供电会当场掉电。
+       原样保留，交给 power_lock_boot() 统一收尾；冷启动时 magic 无效，
+       照旧先断开、等判据。 */
+    if (s_lock_magic == LOCK_MAGIC) return;
+
     gpio_config_t c = {
         .pin_bit_mask = 1ULL << PIN_SELF_LOCK,
         .mode = GPIO_MODE_OUTPUT,
@@ -250,15 +284,22 @@ bool power_lock_boot(void)
     /* 深睡唤醒：hold 仍锁存着上次的电平，动它会直接改供电状态。 */
     if (!fresh && rr == ESP_RST_DEEPSLEEP) {
         s_usb_pwr = (s_lock_want == 0);
+        /* ★ 2026-11-17 顺序修正：hold 生效期间写输出寄存器对外无效，因此必须
+           「设方向 → 写电平 → 最后解除 hold」。反过来会有一瞬由已复位为 0 的
+           输出寄存器驱动 pad，电池供电当场掉电。 */
+        gpio_set_direction((gpio_num_t)PIN_SELF_LOCK, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)PIN_SELF_LOCK, s_lock_want ? 1 : 0);
         gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
+        gpio_deep_sleep_hold_dis();
         return s_lock_want != 0;
     }
     /* 软件复位 / WDT / OTA：设备本来就在跑，按键是松的，不能用按键判据。 */
     if (!fresh) {
         s_usb_pwr = (s_lock_want == 0);
-        gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
+        /* ★ 2026-11-17：先写电平再解除 hold（理由同深睡分支）。 */
         gpio_set_direction((gpio_num_t)PIN_SELF_LOCK, GPIO_MODE_OUTPUT);
         gpio_set_level((gpio_num_t)PIN_SELF_LOCK, s_lock_want ? 1 : 0);
+        gpio_hold_dis((gpio_num_t)PIN_SELF_LOCK);
         return s_lock_want != 0;
     }
 
@@ -268,18 +309,59 @@ bool power_lock_boot(void)
        只可能漏判成「开机失败」（按太短 / 接法选错），不会误判成「意外掉电」。
        冷启动刻意不读 ADC：刷机后用户还没选接法，固件既不知道用哪个唤醒脚、
        也不知道分压接在哪一侧，拿电压猜就等于主动自锁倒灌。 */
-    uint8_t wk = settings_pins()->v[PIN_IDX_WAKE];
-    gpio_config_t btn = {
-        .pin_bit_mask = 1ULL << wk,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&btn);
+    /* ★★ 2026-11-17：按键脚不能只认设置里那一个。
+       刚刷完机 / 恢复出厂时 GPIO 预设是「默认」（唤醒 = GPIO5），而排线与
+       整合板的电源键接在 GPIO1 —— 只读设置值必然读到悬空高电平，于是判成
+       「USB 上电」→ 不自锁 → 松开按键即断电（表现为「必须一直按住」）。
+       既然硬件只有三种固定接法，这里就把「设置值 + 两种硬件固定值」都当候选，
+       任一为低即认定按键按住。误判的代价是「USB 带电池时多导通 200 ms」，
+       由 idle_monitor 的 ADC 轮询发现 5 V 后立即释放，远小于开不了机的代价。 */
+    static const uint8_t EXTRA_KEY[] = { 5, 1 };   /* 默认档 / 排线·整合板 */
+
+    uint8_t cand[4];
+    int nc = 0;
+    cand[nc++] = settings_pins()->v[PIN_IDX_WAKE];
+    for (size_t i = 0; i < sizeof(EXTRA_KEY); i++) {
+        bool dup = false;
+        for (int k = 0; k < nc; k++)
+            if (cand[k] == EXTRA_KEY[i]) dup = true;
+        if (!dup && nc < (int)sizeof(cand)) cand[nc++] = EXTRA_KEY[i];
+    }
+
+    for (int i = 0; i < nc; i++) {
+        gpio_config_t btn = {
+            .pin_bit_mask = 1ULL << cand[i],
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&btn);
+    }
     esp_rom_delay_us(2000);   /* 等内部上拉把脚位拉稳 */
 
-    bool pressed = (gpio_get_level((gpio_num_t)wk) == 0);
+    /* 上电瞬间 VSYS 与引脚都在爬升，单次采样容易读到假高：
+       20 ms 窗口内连采 20 次（1 ms 间隔），任一脚任一次为低即认按下。 */
+    bool pressed = false;
+    int lv[4] = { 1, 1, 1, 1 };
+    for (int t = 0; t < 20 && !pressed; t++) {
+        for (int i = 0; i < nc; i++) {
+            if (gpio_get_level((gpio_num_t)cand[i]) == 0) {
+                lv[i] = 0;
+                pressed = true;
+            }
+        }
+        if (!pressed) esp_rom_delay_us(1000);
+    }
+
+    /* 用 LOGE 打：生产日志级别是 ERROR，LOGI 会被裁掉 */
+    char list[48];
+    int off = 0;
+    list[0] = '\0';
+    for (int i = 0; i < nc && off < (int)sizeof(list) - 12; i++)
+        off += snprintf(list + off, sizeof(list) - (size_t)off,
+                        " G%u=%d", (unsigned)cand[i], lv[i]);
+    ESP_LOGE(TAG, "[pwr] cold key:%s pressed=%d", list, (int)pressed);
     s_lock_want = pressed ? 1 : 0;
     s_usb_pwr   = !pressed;
     gpio_set_level((gpio_num_t)PIN_SELF_LOCK, pressed ? 1 : 0);
@@ -309,8 +391,10 @@ int power_vsys_mv(void)
 }
 
 /* 只在自锁态（电池供电）才需要查：不自锁时电池已隔离，读了也没意义。
-   新排线整段跳过 —— CH213K 已反向阻断，而它的 ADC 接 VSYS，插线会读到 5 V，
-   照旧轮询反而会在 600 ms 内把电池通路切掉（拔线即断电）。
+   ★ 2026-11-17：只服务 FPC 老排线 —— 定时器也只在那一档才会创建（见
+   power_usb_monitor_start）。老排线没有硬件反向阻断，插入 5 V 只能靠 ADC
+   发现后主动释放自锁，否则会倒灌电池；整合板 / 新排线（CH213K）硬件已处理，
+   默认档没有自锁电路，都不进这里。
    连续 USB_HITS_NEED 次超阈值才释放：阈值与满电只差 0.3 V，单点噪声需去抖。 */
 static void usb_poll_cb(void *arg)
 {
@@ -322,7 +406,8 @@ static void usb_poll_cb(void *arg)
     }
 
     const moink_settings_t *st = settings_get();
-    if (st->gpio_preset == GPIO_PRESET_LINE && st->line_ver == LINE_VER_NEW) {
+    /* ★ 2026-11-17：只有 FPC 老排线才检测，其余硬件一律跳过。 */
+    if (!(st->gpio_preset == GPIO_PRESET_LINE && st->line_ver == LINE_VER_OLD)) {
         s_usb_hits = 0;
         return;
     }
@@ -345,6 +430,20 @@ static void usb_poll_cb(void *arg)
 void power_usb_monitor_start(void)
 {
     if (s_usb_timer != NULL) return;
+
+    /* ★ 2026-11-17：只有 FPC 老排线需要运行时 200 ms 的 USB 检测。
+       其余硬件连定时器都不建 —— 不轮询就没有 200 ms 周期唤醒：
+         · 默认档：没有自锁电路，判了也没用
+         · 整合板：电源通路在硬件侧处理
+         · FPC 新排线（CH213K）：已反向阻断，且 ADC 接 VSYS，插线读到 5 V 后
+           照旧轮询会在 600 ms 内把电池通路切掉（拔线即断电） */
+    const moink_settings_t *st = settings_get();
+    if (!(st->gpio_preset == GPIO_PRESET_LINE && st->line_ver == LINE_VER_OLD)) {
+        ESP_LOGW(TAG, "[pwr] usb poll off (preset=%u line_ver=%u)",
+                 (unsigned)st->gpio_preset, (unsigned)st->line_ver);
+        return;
+    }
+
     esp_timer_create_args_t a = {
         .callback = usb_poll_cb,
         .name     = "usb_poll",

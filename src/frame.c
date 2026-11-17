@@ -1,10 +1,13 @@
 #include "frame.h"
+#include "diag.h"
 #include "epd_drv.h"
 #include "power.h"
 #include "store.h"
+#include "net_fetch.h"
 
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_partition.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -15,7 +18,28 @@
 
 static const char *TAG = "frame";
 
-static uint8_t *s_fb = NULL;
+/* ★★★ 2026-11-16 流式改造：删掉 120 KB 静态帧缓冲 ★★★
+ *
+ * 原来 s_fb_store[EPD_MAX_BUF_LEN] 占 RAM 的 36.6%（52.5% 里的一大半），
+ * WiFi 起来后堆只剩 44.9 KB，而 4 条 TCP 连接要 34.6 KB —— 浏览器刷几次
+ * 必然把堆榨干、网页再也打不开。调窗口只是在这个小池子里挪腾，治不了本。
+ *
+ * 现在帧数据落在 flash 的 "scratch" 分区（partitions.csv，128 KB）：
+ *   上传 / 远程下载 —— 边收边写 flash，RAM 只用 4 KB 搬运算存；
+ *   显示           —— esp_partition_mmap() 把该分区映射进地址空间，
+ *                     直接把只读指针交给 epd_display_2bpp_wh()。
+ * epd_write_frame_2bpp() 本来就是「逐行读 src → 行缓冲 → SPI」，所以驱动
+ * 一行没改。刷屏波形要过好几遍整帧，每遍都从 flash 重读 —— 105 KB 约 3~6 ms，
+ * 而单次刷屏 437 ms 起步，可以忽略。
+ */
+
+static const esp_partition_t *s_scr = NULL;   /* scratch 分区（帧临时落点） */
+static esp_partition_mmap_handle_t s_scr_h = 0;
+static const void *s_scr_map = NULL;
+static uint32_t s_wr;                         /* 已落盘字节数 */
+static uint8_t  s_io[4096] __attribute__((aligned(4)));   /* 写暂存 */
+static uint32_t s_io_n;
+
 static SemaphoreHandle_t s_fb_mutex = NULL;
 static SemaphoreHandle_t s_frame_ready = NULL;
 
@@ -35,31 +59,135 @@ static uint16_t crc16_update(uint16_t crc, const uint8_t *d, size_t n)
     return crc;
 }
 
+/* ---------------- scratch 落点 ---------------- */
+
 void frame_prealloc(void)
 {
-    if (s_fb) return;
-    s_fb = malloc(EPD_MAX_BUF_LEN);
-    if (!s_fb) {
-        /* 诊断（R1.3.5）：OOM 时把三个数字打全——总量够不够 / 有没有连续块 /
-           历史最低水位，一眼能分清「真不够」和「被切碎」。 */
-        ESP_LOGE(TAG, "OOM %d bytes: free=%u largest=%u min=%u",
-                 EPD_MAX_BUF_LEN,
-                 (unsigned)esp_get_free_heap_size(),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-                 (unsigned)esp_get_minimum_free_heap_size());
-        abort();
+    if (s_scr) return;
+    s_scr = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                     ESP_PARTITION_SUBTYPE_ANY, "scratch");
+    if (!s_scr) {
+        ESP_LOGE(TAG, "scratch partition MISSING — 流式刷图不可用");
+        return;
     }
+    ESP_LOGE(TAG, "frame sink: flash scratch @0x%06lx %lu KB, free heap %u",
+             (unsigned long)s_scr->address,
+             (unsigned long)(s_scr->size / 1024),
+             (unsigned)esp_get_free_heap_size());
 }
+
+static void scr_unmap(void)
+{
+    if (!s_scr_map) return;
+    esp_partition_munmap(s_scr_h);
+    s_scr_map = NULL;
+}
+
+/* 把暂存块落到 flash。s_wr 在满块写入时恒为 4 KB 倍数，满足 esp_partition_write
+   的 offset 对齐要求；只有最后一次（不足 4 KB）会让 s_wr 不再对齐，之后不再写。 */
+static int scr_flush(void)
+{
+    if (!s_io_n) return 0;
+    esp_err_t e = esp_partition_write(s_scr, s_wr, s_io, s_io_n);
+    if (e != ESP_OK) {
+        ESP_LOGE(TAG, "scratch write @%lu failed: %s",
+                 (unsigned long)s_wr, esp_err_to_name(e));
+        return -1;
+    }
+    s_wr += s_io_n;
+    s_io_n = 0;
+    return 0;
+}
+
+/* 映射整个 scratch（128 KB，64 KB 对齐）。映射期间不能写 flash，调用方负责配对。 */
+const uint8_t *frame_blob_map(void)
+{
+    if (s_scr_map) return (const uint8_t *)s_scr_map;
+    if (!s_scr) return NULL;
+    if (esp_partition_mmap(s_scr, 0, s_scr->size, ESP_PARTITION_MMAP_DATA,
+                           &s_scr_map, &s_scr_h) != ESP_OK) {
+        s_scr_map = NULL;
+        ESP_LOGE(TAG, "scratch mmap failed");
+        return NULL;
+    }
+    return (const uint8_t *)s_scr_map;
+}
+
+void frame_blob_unmap(void)
+{
+    scr_unmap();
+}
+
+int frame_blob_begin(void)
+{
+    if (!s_scr || !s_fb_mutex) return -1;
+    if (xSemaphoreTake(s_fb_mutex, pdMS_TO_TICKS(8000)) != pdTRUE) return -1;
+
+    scr_unmap();                       /* 写之前必须解除映射 */
+    if (esp_partition_erase_range(s_scr, 0, s_scr->size) != ESP_OK) {
+        ESP_LOGE(TAG, "scratch erase failed");
+        xSemaphoreGive(s_fb_mutex);
+        return -1;
+    }
+    s_wr = 0;
+    s_io_n = 0;
+    return 0;
+}
+
+int frame_blob_append(const void *d, int n)
+{
+    const uint8_t *p = (const uint8_t *)d;
+    while (n > 0) {
+        uint32_t room = (uint32_t)sizeof(s_io) - s_io_n;
+        uint32_t k = ((uint32_t)n < room) ? (uint32_t)n : room;
+        memcpy(s_io + s_io_n, p, k);
+        s_io_n += k;
+        p += k;
+        n -= (int)k;
+        if (s_io_n == sizeof(s_io) && scr_flush() != 0) return -1;
+    }
+    return 0;
+}
+
+void frame_blob_abort(void)
+{
+    s_io_n = 0;
+    s_wr = 0;
+    xSemaphoreGive(s_fb_mutex);
+}
+
+uint32_t frame_blob_bytes(void)
+{
+    return s_wr + s_io_n;
+}
+
+int frame_blob_commit_display(uint16_t w, uint16_t h)
+{
+    s_fw = w;
+    s_fh = h;
+
+    int r = -1;
+    if (scr_flush() == 0) {
+        const uint8_t *base = frame_blob_map();
+        if (base) r = epd_display_2bpp_wh(base + FRAME_HDR_LEN, w, h);
+    }
+    scr_unmap();
+    xSemaphoreGive(s_fb_mutex);
+    if (r == 0) epd_panel_deep_sleep();
+    return r;
+}
+
+/* ---------------- 生命周期 ---------------- */
 
 void frame_init(void)
 {
-    frame_prealloc();          /* 正常已在 app_main 最前面抢好，这里是兜底 */
+    frame_prealloc();          /* 正常情况下 app_main 已先调过，这里兜底 */
     s_fb_mutex = xSemaphoreCreateMutex();
     s_frame_ready = xSemaphoreCreateBinary();
     s_fw = epd_profile()->w;
     s_fh = epd_profile()->h;
-    ESP_LOGI(TAG, "frame buffer %d bytes ready (profile %ux%u)",
-             EPD_MAX_BUF_LEN, (unsigned)s_fw, (unsigned)s_fh);
+    ESP_LOGI(TAG, "frame sink ready (profile %ux%u)",
+             (unsigned)s_fw, (unsigned)s_fh);
 }
 
 void frame_wait(void)
@@ -70,7 +198,13 @@ void frame_wait(void)
 int frame_display_now(void)
 {
     if (xSemaphoreTake(s_fb_mutex, portMAX_DELAY) != pdTRUE) return -1;
-    int r = epd_display_2bpp_wh(s_fb, s_fw, s_fh);
+    scr_unmap();
+    int r = -1;
+    if (scr_flush() == 0) {
+        const uint8_t *base = frame_blob_map();
+        if (base) r = epd_display_2bpp_wh(base + FRAME_HDR_LEN, s_fw, s_fh);
+    }
+    scr_unmap();
     xSemaphoreGive(s_fb_mutex);
     if (r == 0) epd_panel_deep_sleep();
     return r;
@@ -87,8 +221,11 @@ int frame_clear_cycles(int cycles)
     return r;
 }
 
+/* ---------------- 上传 ---------------- */
+
 esp_err_t frame_upload_handler(httpd_req_t *req)
 {
+    diag_req("POST /api/frame");
     power_activity();   /* R1.0.8：上传期间不许空闲休眠 */
     /* R1.1.0：先按最大合法载荷粗筛（A1 原生 800x600 = 120000），细筛在读头后
        按 hdr 里的宽高做——A1 允许 768x552 与 800x600 两种帧。 */
@@ -133,19 +270,33 @@ esp_err_t frame_upload_handler(httpd_req_t *req)
 
     /* 面板类型字段（hdr[3]）仅信息性；实际面板由设置决定，不随帧切换。 */
 
-    if (xSemaphoreTake(s_fb_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    if (frame_blob_begin() != 0) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "busy");
+    }
+
+    /* 先把 16 字节帧头写进去，载荷紧随其后（frame_blob_map 的基址即带头）。 */
+    if (frame_blob_append(hdr, FRAME_HDR_LEN) != 0) {
+        frame_blob_abort();
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "flash");
     }
 
     size_t off = 0;
     uint16_t crc = 0xFFFF;
     int err = 0;
     int f_waits = 0;
+    static uint8_t rx[2048] __attribute__((aligned(4)));
+
     while (off < len) {
-        int n = httpd_req_recv(req, (char *)(s_fb + off), len - off);
+        /* ★ 必须自己卡住 len 边界：httpd_req_recv 只受「整个请求剩余长度」约束，
+           save=1 时 body 后面还跟着缩略数据，一次读满 rx 会把缩略开头也吞进来
+           —— 既污染 CRC 又把缩略吃掉（2026-11-16 上机：图库路径必报 CRC mismatch）。 */
+        int want = (int)sizeof(rx);
+        if ((size_t)want > len - off) want = (int)(len - off);
+        int n = httpd_req_recv(req, (char *)rx, want);
         if (n > 0) {
             power_activity();   /* R1.0.8：传输中途不许空闲休眠 */
-            crc = crc16_update(crc, s_fb + off, (size_t)n);
+            crc = crc16_update(crc, rx, (size_t)n);
+            if (frame_blob_append(rx, n) != 0) { err = -2; break; }
             off += (size_t)n;
             f_waits = 0;
             continue;
@@ -159,12 +310,16 @@ esp_err_t frame_upload_handler(httpd_req_t *req)
         break;
     }
 
-    /* 校验失败也在此释放锁；校验通过则继续持锁完成「存槽 + 触发显示」，
-       保证 store_save_frame 读取的 s_fb 不会被并发上传覆盖。 */
     if (err != 0 || crc != crc_hdr) {
-        xSemaphoreGive(s_fb_mutex);
+        frame_blob_abort();
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                                   err ? "body truncated" : "CRC mismatch");
+                                   err == -2 ? "flash write failed"
+                                             : (err ? "body truncated" : "CRC mismatch"));
+    }
+    /* 数据落盘后立刻 flush：显示任务随后只负责 map，不再碰写指针。 */
+    if (scr_flush() != 0) {
+        frame_blob_abort();
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "flash");
     }
 
     ESP_LOGI(TAG, "frame accepted: %ux%u (%lu bytes), CRC ok",
@@ -176,18 +331,24 @@ esp_err_t frame_upload_handler(httpd_req_t *req)
        无 save           只显示不存（原行为）
        tlen=<N>         R1.3.2 缩略载荷长（网页离线预生成，随帧上传，
                         body = 帧头+帧载荷+缩略头+缩略载荷） */
-    bool want_save = false, want_show = true;
+    bool want_save = false, want_show = true, want_remote = false;
     uint32_t tlen = 0;
     int qlen = httpd_req_get_url_query_len(req);
     if (qlen > 0 && qlen < 64) {
         char qbuf[64], vbuf[8];
         if (httpd_req_get_url_query_str(req, qbuf, sizeof(qbuf)) == ESP_OK) {
-            if (httpd_query_key_value(qbuf, "save", vbuf, sizeof(vbuf)) == ESP_OK &&
-                strcmp(vbuf, "1") == 0) {
-                want_save = true;
-                if (httpd_query_key_value(qbuf, "noshow", vbuf, sizeof(vbuf)) == ESP_OK &&
-                    strcmp(vbuf, "1") == 0)
+            if (httpd_query_key_value(qbuf, "save", vbuf, sizeof(vbuf)) == ESP_OK) {
+                if (strcmp(vbuf, "1") == 0) {
+                    want_save = true;
+                    if (httpd_query_key_value(qbuf, "noshow", vbuf, sizeof(vbuf)) == ESP_OK &&
+                        strcmp(vbuf, "1") == 0)
+                        want_show = false;
+                } else if (strcmp(vbuf, "remote") == 0) {
+                    /* R1.4.0：存到远程（WebDAV PUT + 追加清单），不占本地槽 */
+                    want_remote = true;
+                    want_save = false;
                     want_show = false;
+                }
             }
             if (httpd_query_key_value(qbuf, "tlen", vbuf, sizeof(vbuf)) == ESP_OK) {
                 long tl = atol(vbuf);
@@ -201,85 +362,90 @@ esp_err_t frame_upload_handler(httpd_req_t *req)
     /* 精确校验：body 长度必须等于 帧头+帧载荷 [+缩略头+缩略载荷] */
     if (want_save && tlen) {
         uint32_t expect = (uint32_t)(FRAME_HDR_LEN + len) + 16u + tlen;
-        if ((uint32_t)req->content_len != expect)
+        if ((uint32_t)req->content_len != expect) {
+            frame_blob_abort();
             return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "size mismatch");
-    }
-    if (want_save) {
-        /* 收缩略数据：16B 缩略头（同构帧头，magic 0xA5 0x5A）+ tlen 载荷。
-           CRC 字段前端填 0，固件不校验；几何按头内字段自洽。 */
-        uint8_t *thumb = NULL;
-        if (tlen) {
-            uint8_t thdr[16];
-            size_t tg = 0;
-            int tg_waits = 0;
-            while (tg < sizeof(thdr)) {
-                int n = httpd_req_recv(req, (char *)(thdr + tg),
-                                       sizeof(thdr) - tg);
-                if (n > 0) { tg += (size_t)n; tg_waits = 0; continue; }
-                if (n == 0) {            /* recv 超时：WiFi 慢传，短暂等待重试 */
-                    if (++tg_waits > 100) break;
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                    continue;
-                }
-                break;
-            }
-            uint32_t tw = ((uint32_t)thdr[4] << 8) | thdr[5];
-            uint32_t th = ((uint32_t)thdr[6] << 8) | thdr[7];
-            uint32_t tl = ((uint32_t)thdr[8] << 24) | ((uint32_t)thdr[9] << 16) |
-                          ((uint32_t)thdr[10] << 8) | thdr[11];
-            /* fmt=1 2bit 缩略：几何须 4 的倍数且载荷自洽；
-               fmt=2 彩色 JPEG：仅校验长度（JPEG 无几何约束） */
-            int geom_ok = (thdr[2] == 1) ?
-                          (tw != 0 && !(tw & 3) && tl == (tw / 4u) * th) :
-                          (thdr[2] == 2);
-            if (tg != sizeof(thdr) || thdr[0] != 0xA5 || thdr[1] != 0x5A ||
-                !geom_ok || tl != tlen ||
-                tl > (uint32_t)((thdr[2] == 2) ? STORE_THUMB_JPEG_MAX
-                                                : STORE_THUMB_LEN)) {
-                ESP_LOGW(TAG, "bad thumb: got=%u magic=%02X%02X fmt=%u "
-                         "w=%lu h=%lu tl=%lu tlen=%lu", (unsigned)tg,
-                         thdr[0], thdr[1], thdr[2], (unsigned long)tw,
-                         (unsigned long)th, (unsigned long)tl,
-                         (unsigned long)tlen);
-                return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                                           "bad thumb");
-            }
-            thumb = malloc(16u + tlen);
-            if (!thumb) {
-                xSemaphoreGive(s_fb_mutex);
-                return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                                           "oom");
-            }
-            memcpy(thumb, thdr, 16);
-            size_t to = 0;
-            int to_waits = 0;
-            while (to < tlen) {
-                int n = httpd_req_recv(req, (char *)(thumb + 16 + to),
-                                       tlen - to);
-                if (n > 0) { to += (size_t)n; to_waits = 0; continue; }
-                if (n == 0) {
-                    if (++to_waits > 100) break;
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                    continue;
-                }
-                break;
-            }
-            if (to != tlen) {
-                ESP_LOGW(TAG, "thumb truncated: got=%u want=%lu",
-                         (unsigned)to, (unsigned long)tlen);
-                free(thumb);
-                xSemaphoreGive(s_fb_mutex);
-                return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                                           "thumb truncated");
-            }
         }
-        int slot = store_save_frame(hdr, FRAME_HDR_LEN, s_fb, len,
-                                    thumb, tlen);
+    }
+
+    /* 缩略先收到 RAM（最大 20 KB，仍走 malloc），随后和帧一起写 store。
+       帧本身已在 flash，不再需要它驻留内存。 */
+    uint8_t *thumb = NULL;
+    if (want_save && tlen) {
+        thumb = malloc(16u + tlen);
+        if (!thumb) {
+            frame_blob_abort();
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+        }
+        size_t tg = 0;
+        int tg_waits = 0;
+        while (tg < 16u + tlen) {
+            int n = httpd_req_recv(req, (char *)(thumb + tg), 16u + tlen - tg);
+            if (n > 0) { tg += (size_t)n; tg_waits = 0; continue; }
+            if (n == 0) {                    /* recv 超时：WiFi 慢传，短暂等待重试 */
+                if (++tg_waits > 100) break;
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
+            break;
+        }
+        uint32_t tw = ((uint32_t)thumb[4] << 8) | thumb[5];
+        uint32_t th = ((uint32_t)thumb[6] << 8) | thumb[7];
+        uint32_t tl = ((uint32_t)thumb[8] << 24) | ((uint32_t)thumb[9] << 16) |
+                      ((uint32_t)thumb[10] << 8) | thumb[11];
+        /* fmt=1 2bit 缩略：几何须 4 的倍数且载荷自洽；
+           fmt=2 彩色 JPEG：仅校验长度（JPEG 无几何约束） */
+        int geom_ok = (thumb[2] == 1) ?
+                      (tw != 0 && !(tw & 3) && tl == (tw / 4u) * th) :
+                      (thumb[2] == 2);
+        if (tg != 16u + tlen || thumb[0] != 0xA5 || thumb[1] != 0x5A ||
+            !geom_ok || tl != tlen ||
+            tl > (uint32_t)((thumb[2] == 2) ? STORE_THUMB_JPEG_MAX
+                                            : STORE_THUMB_LEN)) {
+            ESP_LOGW(TAG, "bad thumb: got=%u magic=%02X%02X fmt=%u "
+                     "w=%lu h=%lu tl=%lu tlen=%lu", (unsigned)tg,
+                     thumb[0], thumb[1], thumb[2], (unsigned long)tw,
+                     (unsigned long)th, (unsigned long)tl,
+                     (unsigned long)tlen);
+            free(thumb);
+            frame_blob_abort();
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad thumb");
+        }
+    }
+
+    if (want_remote) {
+        /* scratch 已映射，基址 + 16 就是载荷；net_upload_remote 直接发送。 */
+        const uint8_t *base = frame_blob_map();
+        int ur = base ? net_upload_remote(hdr, base + FRAME_HDR_LEN, len)
+                      : NF_ERR_MEM;
+        frame_blob_unmap();
+        frame_blob_abort();               /* 远程路径不显示 */
+        if (ur != 0) {
+            ESP_LOGW(TAG, "remote upload failed: %d", ur);
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                       ur == NF_ERR_OFF ? "remote disabled"
+                                                        : "remote upload failed");
+        }
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_sendstr(req, "OK REMOTE");
+    }
+
+    if (want_save) {
+        const uint8_t *base = frame_blob_map();
+        int slot = base ? store_save_frame_from_flash(hdr, FRAME_HDR_LEN,
+                                                      base + FRAME_HDR_LEN, len,
+                                                      thumb, tlen)
+                        : -1;
+        frame_blob_unmap();
         if (thumb) free(thumb);
         if (slot == STORE_ERR_FULL) {
-            xSemaphoreGive(s_fb_mutex);
-            return httpd_resp_send_err(req, 507,
-                                       "carousel full: delete or clear first");
+            frame_blob_abort();
+            /* IDF 6.1 的 send_err 只认枚举，传 507 会落到 default 变成 500；
+               页面 40-upload.js 靠 status===507 提示「轮播已满 8 张」。 */
+            httpd_resp_set_status(req, "507 Insufficient Storage");
+            httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+            return httpd_resp_send(req, "carousel full: delete or clear first",
+                                   HTTPD_RESP_USE_STRLEN);
         }
         if (slot < 0)
             ESP_LOGW(TAG, "carousel save failed (store unavailable?)");
@@ -287,6 +453,7 @@ esp_err_t frame_upload_handler(httpd_req_t *req)
             ESP_LOGI(TAG, "carousel: saved to slot %d%s", slot,
                      tlen ? " (with thumb)" : "");
     }
+
     if (want_show) {
         s_fw = width;                             /* 显示任务据此选写入路径 */
         s_fh = height;
@@ -299,25 +466,47 @@ esp_err_t frame_upload_handler(httpd_req_t *req)
 }
 
 /* R1.3.0 轮播切图：读 store 槽 -> 校验几何 -> 整屏显示。
-   与传图 / 残影清理共用帧缓冲锁，显示后送面板深睡。 */
+   直接 mmap 该槽，不再经 RAM 中转。显示后送面板深睡。 */
 int frame_display_slot(int slot)
 {
     if (xSemaphoreTake(s_fb_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) return -1;
 
-    int n = store_load_slot(slot, s_fb, EPD_MAX_BUF_LEN);
-    if (n < 16) {
+    const esp_partition_t *sp = store_part();
+    int phys = store_slot_phys(slot);
+    if (!sp || phys < 0) {
         xSemaphoreGive(s_fb_mutex);
         return -1;
     }
-    uint16_t w = (uint16_t)((s_fb[4] << 8) | s_fb[5]);
-    uint16_t h = (uint16_t)((s_fb[6] << 8) | s_fb[7]);
-    if (!epd_frame_geom_ok(w, h, (uint32_t)(n - 16))) {
+    uint32_t off = (uint32_t)phys * STORE_SLOT_SZ;
+
+    uint8_t hdr[16];
+    if (esp_partition_read(sp, off, hdr, 16) != ESP_OK) {
         xSemaphoreGive(s_fb_mutex);
         return -1;
     }
+    uint32_t len = ((uint32_t)hdr[8] << 24) | ((uint32_t)hdr[9] << 16) |
+                   ((uint32_t)hdr[10] << 8) | hdr[11];
+    uint16_t w = (uint16_t)((hdr[4] << 8) | hdr[5]);
+    uint16_t h = (uint16_t)((hdr[6] << 8) | hdr[7]);
+    if (hdr[0] != STORE_MAGIC0 || hdr[1] != STORE_MAGIC1 ||
+        !epd_frame_geom_ok(w, h, len)) {
+        xSemaphoreGive(s_fb_mutex);
+        return -1;
+    }
+
+    const void *p = NULL;
+    esp_partition_mmap_handle_t hh;
+    if (esp_partition_mmap(sp, off, STORE_SLOT_SZ, ESP_PARTITION_MMAP_DATA,
+                           &p, &hh) != ESP_OK) {
+        ESP_LOGE(TAG, "slot %d mmap failed", slot);
+        xSemaphoreGive(s_fb_mutex);
+        return -1;
+    }
+
     s_fw = w;
     s_fh = h;
-    int r = epd_display_2bpp_wh(s_fb + 16, w, h);
+    int r = epd_display_2bpp_wh((const uint8_t *)p + 16, w, h);
+    esp_partition_munmap(hh);
     xSemaphoreGive(s_fb_mutex);
     if (r == 0) epd_panel_deep_sleep();
     return r;

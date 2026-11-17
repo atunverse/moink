@@ -1,19 +1,26 @@
 # Name,   Type, SubType, Offset,   Size,     Flags
 # NOTE: must stay plain ASCII without a UTF-8 BOM (PIO's parser aborts on BOM).
 #
-# MoInk R1.2.0 布局（4 MB flash）—— ★ 本版分区表有变（FB-017 第一部分）：
-#   新增 "store" 原始帧存储分区（轮播存储底座），OTA 槽 1.5M -> 1.25M、
-#   web 960K -> 384K，把余量让给 store 1.0625M。
-#   ★★ 分区表只能靠整包线刷改写 —— 升级到本版必须用 FlashKit 线刷（merged.bin
-#   含新分区表），不能从旧版本 OTA；旧设备 OTA 本包 app.bin 后无 store 分区
-#   （store.c 会告警并报 store_slots=0，其余功能不受影响）。
-#   app 体积 R1.2.0 = 968 KB，1.25M 槽位余量约 35%；web 收窄后仍为页面
-#   （143 KB）的 2.7 倍。web 分区尺寸由 ota_web.c 运行时读取、store 由 store.c
-#   读取，切勿在任何代码里硬编码分区尺寸。
+# MoInk R1.4.0 布局（4 MB flash）
+#
+#   ★★ 2026-11-17 取消页面分区（FB-027）：控制页只保留内嵌一份，web 分区
+#   （384 KB）整体删除，连同原来的 192 KB 尾部空闲一起并入两个 OTA 槽：
+#       槽 1216 KB -> 1408 KB（各 +192 KB），app 实际 928 KB，余量 480 KB。
+#   scratch 从 0x270000 后移到 0x2D0000（原位置会被扩大的 ota_1 覆盖）。
+#   ★ store 起始地址 0x2F0000 一动不动 —— 已有轮播图不受影响。
+#   ★ 分区表只能靠整包线刷改写：升级到本版必须刷 merged.bin，OTA 不可。
+#
+#   ☆ scratch 只存一帧（16B 头 + 最多 120000B 载荷），是「临时落点」，
+#     掉电即失效，不进 NVS、不参与轮播。
+#
+# 沿革：R1.2.0（FB-017）新增 store、OTA 槽 1.5M->1.25M、web 960K->384K；
+#   R1.4.0 流式改造新增 scratch 128 KB（两槽各缩 64 KB）；
+#   R1.4.0 再删 web（FB-027），两槽回到 1408 KB。
+#   分区尺寸一律运行时从分区表读，切勿在代码里硬编码。
 nvs,      data, nvs,     0x9000,   0x4000,
 otadata,  data, ota,     0xd000,   0x2000,
 phy,      data, phy,     0xf000,   0x1000,
-ota_0,    app,  ota_0,   0x10000,  0x140000,
-ota_1,    app,  ota_1,   0x150000, 0x140000,
-web,      data, spiffs,  0x290000, 0x60000,
-store,    data, spiffs,  0x2f0000, 0x110000,
+ota_0,    app,  ota_0,   0x10000,  0x160000,
+ota_1,    app,  ota_1,   0x170000, 0x160000,
+scratch,  data, undefined, 0x2D0000, 0x20000,
+store,    data, spiffs,  0x2F0000, 0x110000,

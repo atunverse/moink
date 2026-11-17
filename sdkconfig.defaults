@@ -47,3 +47,36 @@ CONFIG_RTC_CLK_SRC_INT_RC=y
 CONFIG_RTC_CLK_CAL_CYCLES=1024
 
 # Bluetooth/BLE：刻意不启用（C3 无 PSRAM，NimBLE 会吃光堆并拖垮 SoftAP）。
+
+# ---- 体积优化（2026-11-16）：只做 AP + 可选 STA，纯 IPv4、纯 HTTP ----
+# IPv6 关闭：官方文档实测省约 39 KB flash + 9 KB RAM（AP 场景用不到）。
+CONFIG_LWIP_IPV6=n
+# 远程图槽只支持 http://，不需要 TLS 客户端；企业级 WiFi（WPA2-Enterprise）也不用。
+# 这两项一关，mbedTLS（546 个符号）就整体从链接里消失。
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=n
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=n
+
+# ---- TCP 窗口（2026-11-16 三次定稿）：吞吐 ≈ WND/RTT，但每条连接按
+#      (SND_BUF + WND) 实占堆。2880（2xMSS）太慢、5760（4xMSS）会把 71 KB 堆
+#      撑爆（刷新两次网页就打不开），最终定 4320（3xMSS）：单连接 8.6 KB，
+#      4 条并发 34.6 KB —— 比 2880 快一半，又留得出 WiFi 缓冲的余量。
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=4320
+CONFIG_LWIP_TCP_WND_DEFAULT=4320
+
+# ---- 连接回收（2026-11-16，网页打不开的真正主因）----
+# 浏览器每开一次页面就新建 4~6 条 TCP。默认 MSL=60 s，每条关掉后还要在
+# TIME_WAIT 挂 2xMSL=120 s，期间 PCB / 缓冲不释放；PCB 堆到 LWIP_MAX_ACTIVE_TCP(16)
+# 就再也建不了新连接。热点是单客户端局域网，RTT 极小，2 s 足够（TIME_WAIT 4 s）。
+# 同时 httpd 已开 keep_alive，一次加载只建 2~3 条，源头减少新建。
+CONFIG_LWIP_TCP_MSL=2000
+CONFIG_LWIP_TCP_FIN_WAIT_TIMEOUT=2000
+CONFIG_LWIP_MAX_SOCKETS=10
+# ---- WiFi 收发缓冲（2026-11-16 三次定稿）：先前压到 6/16/16（IDF 默认 10/32/32），
+#      结果 NAPT 转发丢包严重——转发是「收进来再发出去」，双向都要缓冲，静态 RX
+#      只有 6 块（约 9.6 KB）时 AMPDU 一突发就溢出，丢包 → TCP 重传 → 速率塌方。
+#      最终定 8/16/16：静态 RX 补到 8 块（+3.2 KB）解决接收突发；动态 RX/TX 保持
+#      16 的上限——它们按需分配，上限抬到 24 会跟 TCP 窗口抢堆（实测直接 OOM）。
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
