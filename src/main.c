@@ -1212,7 +1212,7 @@ void app_main(void)
     }
 
     power_init();       /* 配好按键脚与电池 ADC，按键任务依赖它 */
-    power_usb_monitor_start();   /* R1.3.6：自锁态下每 200 ms 查 USB（新排线内部跳过） */
+    power_usb_monitor_start();   /* 2026-11-17：仅 FPC 老排线建 200 ms USB 轮询 */
 
     /* 按键识别尽早启动（上电后约 0.3 s）：双击的第二击才来得及被采样到。
        本任务只投事件、不刷屏，display_task 就绪前投来的事件先在队列里排着。 */

@@ -392,8 +392,10 @@ int power_vsys_mv(void)
 }
 
 /* 只在自锁态（电池供电）才需要查：不自锁时电池已隔离，读了也没意义。
-   新排线整段跳过 —— CH213K 已反向阻断，而它的 ADC 接 VSYS，插线会读到 5 V，
-   照旧轮询反而会在 600 ms 内把电池通路切掉（拔线即断电）。
+   ★ 2026-11-17：只服务 FPC 老排线 —— 定时器也只在那一档才会创建（见
+   power_usb_monitor_start）。老排线没有硬件反向阻断，插入 5 V 只能靠 ADC
+   发现后主动释放自锁，否则会倒灌电池；整合板 / 新排线（CH213K）硬件已处理，
+   默认档没有自锁电路，都不进这里。
    连续 USB_HITS_NEED 次超阈值才释放：阈值与满电只差 0.3 V，单点噪声需去抖。 */
 static void usb_poll_cb(void *arg)
 {
@@ -405,7 +407,8 @@ static void usb_poll_cb(void *arg)
     }
 
     const moink_settings_t *st = settings_get();
-    if (st->gpio_preset == GPIO_PRESET_LINE && st->line_ver == LINE_VER_NEW) {
+    /* ★ 2026-11-17：只有 FPC 老排线才检测，其余硬件一律跳过。 */
+    if (!(st->gpio_preset == GPIO_PRESET_LINE && st->line_ver == LINE_VER_OLD)) {
         s_usb_hits = 0;
         return;
     }
@@ -428,6 +431,20 @@ static void usb_poll_cb(void *arg)
 void power_usb_monitor_start(void)
 {
     if (s_usb_timer != NULL) return;
+
+    /* ★ 2026-11-17：只有 FPC 老排线需要运行时 200 ms 的 USB 检测。
+       其余硬件连定时器都不建 —— 不轮询就没有 200 ms 周期唤醒：
+         · 默认档：没有自锁电路，判了也没用
+         · 整合板：电源通路在硬件侧处理
+         · FPC 新排线（CH213K）：已反向阻断，且 ADC 接 VSYS，插线读到 5 V 后
+           照旧轮询会在 600 ms 内把电池通路切掉（拔线即断电） */
+    const moink_settings_t *st = settings_get();
+    if (!(st->gpio_preset == GPIO_PRESET_LINE && st->line_ver == LINE_VER_OLD)) {
+        ESP_LOGW(TAG, "[pwr] usb poll off (preset=%u line_ver=%u)",
+                 (unsigned)st->gpio_preset, (unsigned)st->line_ver);
+        return;
+    }
+
     esp_timer_create_args_t a = {
         .callback = usb_poll_cb,
         .name     = "usb_poll",
